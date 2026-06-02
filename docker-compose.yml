@@ -26,7 +26,7 @@ services:
       database__connection__password: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}
       database__connection__database: ${MYSQL_DATABASE:-ghost}
     volumes:
-      - ghost_content:/var/lib/ghost/content
+      - ./data/ghost-content:/var/lib/ghost/content
     expose:
       - "2368"
     networks:
@@ -44,7 +44,7 @@ services:
       MYSQL_USER: ${MYSQL_USER:-ghost}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}
     volumes:
-      - mysql_data:/var/lib/mysql
+      - ./data/mysql:/var/lib/mysql
     healthcheck:
       # `ping` returns success once the server accepts connections.
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
@@ -65,16 +65,10 @@ services:
       - "443:443"
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
+      - ./data/caddy/data:/data
+      - ./data/caddy/config:/config
     networks:
       - web
-
-volumes:
-  ghost_content:
-  mysql_data:
-  caddy_data:
-  caddy_config:
 
 networks:
   web:

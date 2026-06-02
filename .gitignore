@@ -1,5 +1,8 @@
 # Secrets — never commit
 .env
 
-# Local Ghost content if ever bind-mounted instead of using a named volume
-content/
+# IDE
+.idea/
+
+# Persisted runtime data (Ghost content, MySQL, Caddy state)
+data/
