@@ -1,0 +1,24 @@
+# Caddy reverse proxy for Ghost.
+#
+# LOCAL TESTING (current): plain HTTP on port 80, proxying to Ghost.
+# Visit http://localhost/  and  http://localhost/ghost  to set up.
+:80 {
+	reverse_proxy ghost:2368
+
+	encode gzip zstd
+
+	log {
+		output stdout
+		format console
+	}
+}
+
+# ---------------------------------------------------------------------------
+# PRODUCTION (uncomment & set your domain, then remove the :80 block above).
+# Caddy will automatically obtain & renew a Let's Encrypt certificate.
+# Also set GHOST_URL=https://blog.example.com in .env.
+#
+# blog.example.com {
+# 	reverse_proxy ghost:2368
+# 	encode gzip zstd
+# }
