@@ -22,7 +22,7 @@ cp .env.example .env
 # edit .env and set MYSQL_ROOT_PASSWORD / MYSQL_PASSWORD
 
 # 2. Build & start
-docker compose up -d --build
+make dev          # or: docker compose up -d --build
 
 # 3. Open the site / admin
 #    http://localhost/         -> the blog
@@ -36,15 +36,23 @@ docker compose ps
 docker compose logs -f ghost
 ```
 
-## Going to production (real domain + HTTPS)
+## Going to production
+
+### IP only (no domain yet) — plain HTTP
+
+1. In `.env`, set `GHOST_URL=http://<public-ip>` and leave
+   `CADDY_SITE_ADDRESS` unset (Caddy serves plain HTTP on port 80).
+2. Open port **80** to the internet.
+3. `make prod` — verifies the `.env` settings, then starts the stack.
+
+### Real domain + HTTPS
 
 1. Point your domain's DNS A/AAAA record at this server.
-2. Edit `caddy/Caddyfile`: comment out the `:80` block and uncomment the
-   `blog.example.com { ... }` block, replacing it with your domain.
-3. Set `GHOST_URL=https://your-domain` in `.env`.
-4. Ensure ports **80** and **443** are open to the internet (Caddy needs them
+2. In `.env`, set `GHOST_URL=https://your-domain` and
+   `CADDY_SITE_ADDRESS=your-domain`.
+3. Ensure ports **80** and **443** are open to the internet (Caddy needs them
    to obtain a Let's Encrypt certificate).
-5. `docker compose up -d` — Caddy provisions and renews the cert automatically.
+4. `make prod` — Caddy provisions and renews the cert automatically.
 
 ## Backups
 

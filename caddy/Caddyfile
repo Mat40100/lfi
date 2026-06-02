@@ -1,8 +1,11 @@
 # Caddy reverse proxy for Ghost.
 #
-# LOCAL TESTING (current): plain HTTP on port 80, proxying to Ghost.
-# Visit http://localhost/  and  http://localhost/ghost  to set up.
-:80 {
+# The site address comes from CADDY_SITE_ADDRESS (set in .env, passed through
+# docker-compose.yml):
+#   - local testing (default): ":80" — plain HTTP, visit http://localhost/
+#   - production: your domain, e.g. "blog.example.com" — Caddy automatically
+#     obtains & renews a Let's Encrypt certificate (ports 80/443 must be open).
+{$CADDY_SITE_ADDRESS::80} {
 	reverse_proxy ghost:2368
 
 	encode gzip zstd
@@ -12,13 +15,3 @@
 		format console
 	}
 }
-
-# ---------------------------------------------------------------------------
-# PRODUCTION (uncomment & set your domain, then remove the :80 block above).
-# Caddy will automatically obtain & renew a Let's Encrypt certificate.
-# Also set GHOST_URL=https://blog.example.com in .env.
-#
-# blog.example.com {
-# 	reverse_proxy ghost:2368
-# 	encode gzip zstd
-# }

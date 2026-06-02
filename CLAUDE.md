@@ -8,8 +8,9 @@ A self-hosted [Ghost](https://ghost.org/) blog deployed with Docker Compose. The
 
 - `docker-compose.yml` — three services: `ghost` (custom image), `mysql` (MySQL 8), `caddy` (reverse proxy / TLS)
 - `ghost/Dockerfile` — extends `ghost:5-alpine`; adds bash, curl, tzdata, mariadb-client and a healthcheck
-- `caddy/Caddyfile` — `:80` block for local testing; commented-out domain block for production (Let's Encrypt)
-- `.env` (from `.env.example`, git-ignored) — `GHOST_URL` + MySQL credentials; compose fails fast if passwords are unset
+- `caddy/Caddyfile` — single site block; the address comes from `CADDY_SITE_ADDRESS` (default `:80` for local, a domain in prod → automatic Let's Encrypt)
+- `Makefile` — `dev`, `prod` (validates `.env` before launching), `down`, `logs`, `ps`
+- `.env` (from `.env.example`, git-ignored) — `GHOST_URL`, `CADDY_SITE_ADDRESS` + MySQL credentials; compose fails fast if passwords are unset
 
 ## Architecture
 
@@ -22,16 +23,16 @@ MySQL runs with `--default-authentication-plugin=mysql_native_password` because 
 ## Commands
 
 ```bash
-docker compose up -d --build     # build & start (requires .env)
-docker compose ps                # status
-docker compose logs -f ghost     # logs
+make dev                         # build & start locally (requires .env)
+make prod                        # production launch — checks GHOST_URL/CADDY_SITE_ADDRESS first
+make logs / make ps / make down
 docker compose config --quiet    # validate compose file (needs MYSQL_* vars set)
 docker compose pull && docker compose build --pull && docker compose up -d   # update
 ```
 
 Site: `http://localhost/` — admin: `http://localhost/ghost`.
 
-Going to production: switch the Caddyfile to the domain block, set `GHOST_URL=https://<domain>` in `.env`, open ports 80/443 (see readme.md for the full procedure, plus backup commands).
+Going to production: currently IP-only — `GHOST_URL=http://<public-ip>` in `.env`, `CADDY_SITE_ADDRESS` unset (plain HTTP on :80), `make prod`. Once a domain exists: `GHOST_URL=https://<domain>` + `CADDY_SITE_ADDRESS=<domain>`, open ports 80/443 (see readme.md for the full procedure, plus backup commands).
 
 ## Clipboard
 
