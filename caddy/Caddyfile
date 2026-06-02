@@ -28,3 +28,21 @@
 		format console
 	}
 }
+
+# Umami analytics (dashboard + tracking script) on a separate port.
+# Once a domain exists, replace with a subdomain site block instead,
+# e.g. "stats.example.com { reverse_proxy umami:3000 }".
+:8080 {
+	reverse_proxy umami:3000 {
+		# Umami needs a few seconds to run DB migrations on first boot.
+		lb_try_duration 30s
+		lb_try_interval 1s
+	}
+
+	encode gzip zstd
+
+	log {
+		output stdout
+		format console
+	}
+}

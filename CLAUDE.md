@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A self-hosted [Ghost](https://ghost.org/) blog deployed with Docker Compose. There is no application code — the repo is infrastructure config only:
 
-- `docker-compose.yml` — three services: `ghost` (custom image), `mysql` (MySQL 8), `caddy` (reverse proxy / TLS)
+- `docker-compose.yml` — four services: `ghost` (custom image), `mysql` (MySQL 8), `caddy` (reverse proxy / TLS), `umami` (self-hosted analytics, dashboard on port 8080, shares the MySQL instance via a dedicated `umami` database)
 - `ghost/Dockerfile` — extends `ghost:5-alpine`; adds bash, curl, tzdata, mariadb-client and a healthcheck
 - `caddy/Caddyfile` — single site block; the address comes from `CADDY_SITE_ADDRESS` (default `:80` for local, a domain in prod → automatic Let's Encrypt)
 - `Makefile` — `dev`, `prod` (validates `.env` before launching), `down`, `logs`, `ps`
@@ -14,7 +14,7 @@ A self-hosted [Ghost](https://ghost.org/) blog deployed with Docker Compose. The
 
 ## Architecture
 
-Two Docker networks isolate traffic: `web` (caddy ↔ ghost) and `internal` (ghost ↔ mysql). MySQL is never exposed to caddy or the host. Ghost waits on mysql's healthcheck before starting. Caddy is the only service publishing ports (80/443).
+Two Docker networks isolate traffic: `web` (caddy ↔ ghost/umami) and `internal` (ghost/umami ↔ mysql). MySQL is never exposed to caddy or the host. Ghost and umami wait on mysql's healthcheck before starting. Caddy is the only service publishing ports (80/443 for Ghost, 8080 for the Umami dashboard + tracker — the tracking script is wired into Ghost via the `codeinjection_head` setting).
 
 All persistent state lives in bind mounts under `./data/` (git-ignored): `data/ghost-content`, `data/mysql`, `data/caddy/data`, `data/caddy/config`. Keep these directories pre-created — if Docker creates them they're owned by root and Ghost (uid 1000) can't write its content dir.
 

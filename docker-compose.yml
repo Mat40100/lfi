@@ -34,6 +34,23 @@ services:
       - web
       - internal
 
+  umami:
+    image: ghcr.io/umami-software/umami:mysql-v2.16
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DATABASE_TYPE: mysql
+      # Dedicated `umami` database in the shared MySQL instance (created once
+      # by hand; persists in ./data/mysql like the ghost database).
+      DATABASE_URL: mysql://umami:${UMAMI_DB_PASSWORD:?set UMAMI_DB_PASSWORD in .env}@mysql:3306/umami
+      APP_SECRET: ${UMAMI_APP_SECRET:?set UMAMI_APP_SECRET in .env}
+      DISABLE_TELEMETRY: "1"
+    networks:
+      - web
+      - internal
+
   mysql:
     image: mysql:8.0
     restart: unless-stopped
@@ -64,6 +81,8 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      # Umami analytics dashboard + tracker (second site block in the Caddyfile).
+      - "8080:8080"
     environment:
       # Site address for the Caddyfile: ":80" locally, your domain in prod.
       CADDY_SITE_ADDRESS: ${CADDY_SITE_ADDRESS:-:80}
