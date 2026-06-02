@@ -25,6 +25,9 @@ services:
       database__connection__user: ${MYSQL_USER:-ghost}
       database__connection__password: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}
       database__connection__database: ${MYSQL_DATABASE:-ghost}
+      # No mail transport is configured yet; without this, admin login tries to
+      # email a device-verification code and fails with a 500.
+      security__staffDeviceVerification: "false"
     volumes:
       - ./data/ghost-content:/var/lib/ghost/content
     networks:
