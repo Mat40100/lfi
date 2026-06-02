@@ -6,7 +6,20 @@
 #   - production: your domain, e.g. "blog.example.com" — Caddy automatically
 #     obtains & renews a Let's Encrypt certificate (ports 80/443 must be open).
 {$CADDY_SITE_ADDRESS::80} {
-	reverse_proxy ghost:2368
+	reverse_proxy ghost:2368 {
+		# Ghost takes ~10-15s to migrate the DB and open its port on a fresh
+		# start. Retry instead of returning 502/503 to clients during boot.
+		lb_try_duration 30s
+		lb_try_interval 1s
+
+		# Ghost hard-codes SameSite=None on its private-mode cookie
+		# (ghost-private) but only adds Secure when it sees an HTTPS request.
+		# Over plain HTTP that yields "SameSite=None" without "Secure", which
+		# browsers reject — so the private-site password never sticks. Rewrite
+		# the upstream Set-Cookie to SameSite=Lax (correct for this same-site
+		# login flow). Remove once the site is served over HTTPS.
+		header_down Set-Cookie "(?i)samesite=none" "SameSite=Lax"
+	}
 
 	encode gzip zstd
 
