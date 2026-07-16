@@ -60,7 +60,7 @@ wired together only at the Docker **network** level (`lfi_web`) and via Caddy.
 - [x] **Phase 1a** — `git clone discourse_docker → /var/discourse`
 - [x] **Phase 1b** — `containers/app.yml` (hostname `forum.`, Mailjet SMTP, locale fr, `expose: []`, no Discourse TLS); bootstrapped OK, container `app` running (`--restart=always`)
 - [x] **Phase 2** — `app` joined to `lfi_web`; Caddy `forum.lol-reminder.fr` block added; HTTPS live (LE cert issued via TLS-ALPN-01). Forum reachable, shows `finish_installation`.
-- [ ] **Phase 3** — create/activate Discourse admin account (`mathieu.dolhen@gmail.com`)
+- [x] **Phase 3** — admin account created + activated via Mailjet email: `mathieu.d <mathieu.dolhen@gmail.com>` (active, approved). Confirms Discourse SMTP works end-to-end.
 - [ ] **Phase 4** — deploy DoG + Caddy route for the DoG path prefix
 - [ ] **Phase 5** — wire SSO (Ghost custom integration + 2 webhooks; enable DiscourseConnect)
 - [ ] **Phase 6** — private categories, tier→group mapping, acceptance tests
@@ -116,16 +116,34 @@ Reload with `docker compose exec caddy caddy reload --config /etc/caddy/Caddyfil
 
 ## Phase 4 — DoG (Discourse-on-Ghost)
 
-Repo: https://github.com/vikaspotluri123/discourse-on-ghost — small Node service,
-added to the `~/lfi` compose stack (network `web`), reverse-proxied by Caddy under
-the Ghost domain path `…/ghost/api/external_discourse_on_ghost/…`. `.env` keys
-(values only in the server `.env`, never committed):
+Repo: https://github.com/vikaspotluri123/discourse-on-ghost — small Node/TS service.
+**No official Docker image**, so we build one from **pinned, audited source**.
 
+**Security audit (option B).** Pinned commit **`74f3a32a12d33bb50d898f070930314faba6a650`**
+(= tag `v0.3.0`). Reviewed: no `child_process`/`exec`/`eval`/`vm`; network egress
+only to the configured Ghost/Discourse URLs; `process.env` only maps `DOG_*` config
+(no exfiltration); deps minimal + reputable (`@tryghost/*`, `express`, `node-fetch`,
+`dotenv`); no pre/postinstall scripts; standard WebCrypto HMAC-SHA256. Built with
+`git checkout <commit>` + `yarn install --frozen-lockfile`.
+
+Build: `~/lfi/dog/Dockerfile` → image `lfi-dog:v0.3.0`. Runs as a service in the
+`~/lfi` compose stack (network `web`), listening on `0.0.0.0:3286`
+(`DOG_HOSTNAME=0.0.0.0`). Caddy proxies the path prefix
+`/ghost/api/external_discourse_on_ghost/*` (on `lol-reminder.fr`) to `dog:3286`.
+
+Routes DoG exposes under that prefix (verified in source): `sso`, `health`
+(→ `{"message":"Howdy!"}`), `hook/<webhook_id>` (POST), `admin/sync-tiers`,
+`admin/clear-caches`. **Note:** webhook path is `.../hook/<ID>`, not `.../<ID>`.
+
+`.env` keys (values only in the server `.env`, never committed):
 ```
 DOG_GHOST_URL=https://lol-reminder.fr
 DOG_GHOST_ADMIN_TOKEN=<id:secret from a Ghost custom integration>
 DOG_DISCOURSE_URL=https://forum.lol-reminder.fr
 DOG_DISCOURSE_API_KEY=<Discourse admin API key>
+DOG_DISCOURSE_SSO_TYPE=session
+DOG_GHOST_MEMBER_DELETE_DISCOURSE_ACTION=suspend
+DOG_GHOST_MEMBER_WEBHOOKS_ENABLED=true
 DOG_DISCOURSE_SHARED_SECRET=<openssl rand -hex 32>
 DOG_GHOST_MEMBER_UPDATED_WEBHOOK_ID=<openssl rand -hex 12>
 DOG_GHOST_MEMBER_DELETED_WEBHOOK_ID=<openssl rand -hex 12>
@@ -139,9 +157,9 @@ DOG_GHOST_MEMBER_DELETED_WEBHOOK_ID=<openssl rand -hex 12>
    - `discourse_connect_url` = `https://lol-reminder.fr/ghost/api/external_discourse_on_ghost/sso`
    - `discourse_connect_secret` = `DOG_DISCOURSE_SHARED_SECRET`
    - ⚠️ **Keep an admin session open** — enabling this disables local Discourse login (everything goes through Ghost).
-3. Ghost custom integration → **Add webhook** ×2:
-   - `Member updated` → `…/ghost/api/external_discourse_on_ghost/<DOG_GHOST_MEMBER_UPDATED_WEBHOOK_ID>`
-   - `Member deleted` → `…/ghost/api/external_discourse_on_ghost/<DOG_GHOST_MEMBER_DELETED_WEBHOOK_ID>`
+3. Ghost custom integration → **Add webhook** ×2 (note the `/hook/` segment):
+   - `Member updated` → `…/ghost/api/external_discourse_on_ghost/hook/<DOG_GHOST_MEMBER_UPDATED_WEBHOOK_ID>`
+   - `Member deleted` → `…/ghost/api/external_discourse_on_ghost/hook/<DOG_GHOST_MEMBER_DELETED_WEBHOOK_ID>`
 
 ## Phase 6 — Make it private
 
