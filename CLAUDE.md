@@ -34,6 +34,25 @@ Site: `http://localhost/` — admin: `http://localhost/ghost`.
 
 Going to production: currently IP-only — `GHOST_URL=http://<public-ip>` in `.env`, `CADDY_SITE_ADDRESS` unset (plain HTTP on :80), `make prod`. Once a domain exists: `GHOST_URL=https://<domain>` + `CADDY_SITE_ADDRESS=<domain>`, open ports 80/443 (see readme.md for the full procedure, plus backup commands).
 
+## Production server
+
+- **Host:** `37.59.103.153` (OVH, eu-west, Ubuntu cloud image). Site served over plain HTTP on :80.
+- **SSH:** `ssh ubuntu@37.59.103.153 -i ~/.ssh/id_lfi` — login user is `ubuntu`, key-only auth. The `id_lfi` ed25519 keypair lives on this workstation (`~/.ssh/id_lfi` / `.pub`); its public key is authorized on the box.
+- If you hit `Too many authentication failures`, the client is offering too many keys before the right one — force it: add `-o IdentitiesOnly=yes`, or use a `Host` entry in `~/.ssh/config` pinning `IdentityFile ~/.ssh/id_lfi`.
+
+### Recovery via OVH rescue mode (locked out of SSH)
+
+1. OVH Manager → server → **Boot → Rescue → reboot**. OVH emails temporary `root` rescue credentials (short-lived — don't commit them).
+2. SSH in as rescue `root`. If the client won't reach the password prompt, force password-only: `ssh -o PubkeyAuthentication=no -o PreferredAuthentications=password -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new root@37.59.103.153`.
+3. Disk layout: `sda1` = real root (`cloudimg-rootfs`), `sda16` = `/boot`, `sda15` = EFI, `sdb1` = the rescue OS (ignore). Mount + chroot:
+   ```bash
+   mount /dev/sda1 /mnt && mount /dev/sda16 /mnt/boot && mount /dev/sda15 /mnt/boot/efi
+   for d in dev proc sys run; do mount --rbind /$d /mnt/$d; done
+   chroot /mnt /bin/bash
+   ```
+4. Fix auth (add pubkey to `/home/ubuntu/.ssh/authorized_keys`, `chown ubuntu:ubuntu`, `chmod 700` dir / `600` file; or `passwd ubuntu`).
+5. `exit`, `umount -R /mnt`, then OVH Manager → **Boot → Hard disk → reboot**.
+
 ## Clipboard
 
 To copy text to the local clipboard, pipe data to the appropriate command.
