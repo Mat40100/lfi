@@ -62,7 +62,9 @@ wired together only at the Docker **network** level (`lfi_web`) and via Caddy.
 - [x] **Phase 2** — `app` joined to `lfi_web`; Caddy `forum.lol-reminder.fr` block added; HTTPS live (LE cert issued via TLS-ALPN-01). Forum reachable, shows `finish_installation`.
 - [x] **Phase 3** — admin account created + activated via Mailjet email: `mathieu.d <mathieu.dolhen@gmail.com>` (active, approved). Confirms Discourse SMTP works end-to-end.
 - [x] **Phase 4** — DoG built (pinned `lfi-dog:v0.3.0`) + deployed as `dog` service (compose override, network `web`, `dog/dog.env`); Caddy `handle`s the `/ghost/api/external_discourse_on_ghost/*` prefix → `dog:3286`, everything else → Ghost. Public `/health` → `Howdy!`. Discourse API key generated via rails; HMAC secret + webhook IDs generated.
-- [~] **Phase 5** — wire SSO. Ghost custom integration created (Admin API token in `dog/dog.env`). TODO: create the 2 Ghost webhooks + enable DiscourseConnect in Discourse (⚠️ lockout risk — see below).
+- [x] **Phase 5** — SSO wired. 2 Ghost webhooks created (`member.edited`/`member.deleted` → DoG `hook/<id>`). Ghost member `mathieu.dolhen@gmail.com` created so the Discourse admin survives SSO. DiscourseConnect enabled via rails (`enable_discourse_connect=true`, url→DoG `/sso`, secret = `DOG_DISCOURSE_SHARED_SECRET`). Redirect chain verified end-to-end (Discourse→DoG→Ghost; HMAC accepted).
+  - ⚠️ **Ghost private-mode (site password) conflicts with member login**: it redirects the whole front-end to `/private/`, so members can't reach the portal to sign in for SSO. Decide: turn OFF Ghost private mode (recommended — gate the *forum* via Discourse `login_required` instead), or keep it and accept the friction.
+  - Rollback if locked out: `docker exec app rails r 'SiteSetting.enable_discourse_connect=false'`.
 - [ ] **Phase 6** — private categories, tier→group mapping, acceptance tests
 
 ---
