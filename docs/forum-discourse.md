@@ -61,8 +61,8 @@ wired together only at the Docker **network** level (`lfi_web`) and via Caddy.
 - [x] **Phase 1b** — `containers/app.yml` (hostname `forum.`, Mailjet SMTP, locale fr, `expose: []`, no Discourse TLS); bootstrapped OK, container `app` running (`--restart=always`)
 - [x] **Phase 2** — `app` joined to `lfi_web`; Caddy `forum.lol-reminder.fr` block added; HTTPS live (LE cert issued via TLS-ALPN-01). Forum reachable, shows `finish_installation`.
 - [x] **Phase 3** — admin account created + activated via Mailjet email: `mathieu.d <mathieu.dolhen@gmail.com>` (active, approved). Confirms Discourse SMTP works end-to-end.
-- [ ] **Phase 4** — deploy DoG + Caddy route for the DoG path prefix
-- [ ] **Phase 5** — wire SSO (Ghost custom integration + 2 webhooks; enable DiscourseConnect)
+- [x] **Phase 4** — DoG built (pinned `lfi-dog:v0.3.0`) + deployed as `dog` service (compose override, network `web`, `dog/dog.env`); Caddy `handle`s the `/ghost/api/external_discourse_on_ghost/*` prefix → `dog:3286`, everything else → Ghost. Public `/health` → `Howdy!`. Discourse API key generated via rails; HMAC secret + webhook IDs generated.
+- [~] **Phase 5** — wire SSO. Ghost custom integration created (Admin API token in `dog/dog.env`). TODO: create the 2 Ghost webhooks + enable DiscourseConnect in Discourse (⚠️ lockout risk — see below).
 - [ ] **Phase 6** — private categories, tier→group mapping, acceptance tests
 
 ---
