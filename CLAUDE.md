@@ -36,9 +36,17 @@ Going to production: currently IP-only — `GHOST_URL=http://<public-ip>` in `.e
 
 ## Production server
 
-- **Host:** `37.59.103.153` (OVH, eu-west, Ubuntu cloud image). Site served over plain HTTP on :80.
+- **Host:** `37.59.103.153` (OVH, eu-west, Ubuntu cloud image), domain **`lol-reminder.fr`** (+ `www`), DNS on OVH nameservers.
+- **URL:** served over **HTTPS** — `GHOST_URL=https://lol-reminder.fr`, `CADDY_SITE_ADDRESS=lol-reminder.fr www.lol-reminder.fr`. Caddy auto-manages the Let's Encrypt cert; `www` and `:80` redirect to the apex HTTPS site.
+- **Ghost is in private mode** (members-only) — the front-end redirects to `/private/`. Toggle in Ghost Admin → Settings → Access.
 - **SSH:** `ssh ubuntu@37.59.103.153 -i ~/.ssh/id_lfi` — login user is `ubuntu`, key-only auth. The `id_lfi` ed25519 keypair lives on this workstation (`~/.ssh/id_lfi` / `.pub`); its public key is authorized on the box.
 - If you hit `Too many authentication failures`, the client is offering too many keys before the right one — force it: add `-o IdentitiesOnly=yes`, or use a `Host` entry in `~/.ssh/config` pinning `IdentityFile ~/.ssh/id_lfi`.
+
+### Prod-only config not in this repo
+
+The live stack lives in `~/lfi` on the server. It tracks this repo (Ghost + MySQL + Caddy + Umami), plus **one server-only addition** — so edit prod config **on the server** and recreate there (`docker compose up -d <svc>`, or `caddy reload` for a zero-downtime Caddyfile change); don't assume a local `make prod` reproduces it:
+
+- **Transactional email (SMTP)** is configured via a server-side `docker-compose.override.yml` that adds `mail__*` env to the `ghost` service; values live in the server `.env` (`MAIL_FROM`, `SMTP_HOST/PORT/SECURE/USER/PASS`). Provider: **Mailjet** (`in-v3.mailjet.com:465` SSL), sending as `noreply@lol-reminder.fr`. This covers staff invites + member magic-links (NOT bulk newsletters — that's Mailgun-only in Ghost). Domain is SPF+DKIM authenticated (`spf.mailjet.com`, `mailjet._domainkey`). Secrets are only in the server `.env` — never commit them.
 
 ### Recovery via OVH rescue mode (locked out of SSH)
 
