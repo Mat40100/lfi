@@ -55,12 +55,12 @@ wired together only at the Docker **network** level (`lfi_web`) and via Caddy.
 
 - [x] **Phase 0 — prerequisites**
   - [x] 2 GB swap created + persisted (`/swapfile`, in `/etc/fstab`) — Discourse requires swap
-  - [ ] DNS `A forum.lol-reminder.fr → 37.59.103.153` (OVH zone) — *user action*
-  - [ ] Admin email chosen (a mailbox the operator can actually read; **not** `@lol-reminder.fr`)
+  - [x] DNS `A forum.lol-reminder.fr → 37.59.103.153` (OVH zone)
+  - [x] Admin email = `mathieu.dolhen@gmail.com`
 - [x] **Phase 1a** — `git clone discourse_docker → /var/discourse`
-- [ ] **Phase 1b** — configure `containers/app.yml` + bootstrap
-- [ ] **Phase 2** — Caddy `forum.lol-reminder.fr` block; verify HTTPS
-- [ ] **Phase 3** — create/activate Discourse admin account
+- [x] **Phase 1b** — `containers/app.yml` (hostname `forum.`, Mailjet SMTP, locale fr, `expose: []`, no Discourse TLS); bootstrapped OK, container `app` running (`--restart=always`)
+- [x] **Phase 2** — `app` joined to `lfi_web`; Caddy `forum.lol-reminder.fr` block added; HTTPS live (LE cert issued via TLS-ALPN-01). Forum reachable, shows `finish_installation`.
+- [ ] **Phase 3** — create/activate Discourse admin account (`mathieu.dolhen@gmail.com`)
 - [ ] **Phase 4** — deploy DoG + Caddy route for the DoG path prefix
 - [ ] **Phase 5** — wire SSO (Ghost custom integration + 2 webhooks; enable DiscourseConnect)
 - [ ] **Phase 6** — private categories, tier→group mapping, acceptance tests
@@ -167,8 +167,16 @@ sudo ./launcher cleanup            # prune old images
 ```
 
 **Gotchas**
-- After every `./launcher rebuild app`, re-verify the container is on `lfi_web`
-  (see Phase 1b) or Caddy can't reach it.
+- **Applying Caddyfile changes:** `caddy reload` (via the admin API on `:2019`)
+  does NOT work in this setup — the admin endpoint is unreachable, so a reload
+  fails **silently** and the old config keeps running (symptom: new site gets
+  auto-HTTPS 308s but no cert is ever issued, and its requests log as JSON
+  instead of the block's console format). Apply changes with
+  `docker compose restart caddy` instead (~1-2 s blip, reads the Caddyfile fresh).
+- After every `./launcher rebuild app`, the `app` container drops off `lfi_web`
+  (rebuild recreates it). Re-run `docker network connect lfi_web app` or Caddy
+  can't reach it (502). Verify with
+  `docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' app`.
 - SMTP sender must stay `@lol-reminder.fr` (SPF/DKIM authenticated for Mailjet).
 - DiscourseConnect is free on self-hosted Discourse (no paid plan needed).
 
