@@ -65,7 +65,9 @@ wired together only at the Docker **network** level (`lfi_web`) and via Caddy.
 - [x] **Phase 5** — SSO wired. 2 Ghost webhooks created (`member.edited`/`member.deleted` → DoG `hook/<id>`). Ghost member `mathieu.dolhen@gmail.com` created so the Discourse admin survives SSO. DiscourseConnect enabled via rails (`enable_discourse_connect=true`, url→DoG `/sso`, secret = `DOG_DISCOURSE_SHARED_SECRET`). Redirect chain verified end-to-end (Discourse→DoG→Ghost; HMAC accepted).
   - ⚠️ **Ghost private-mode (site password) conflicts with member login**: it redirects the whole front-end to `/private/`, so members can't reach the portal to sign in for SSO. Decide: turn OFF Ghost private mode (recommended — gate the *forum* via Discourse `login_required` instead), or keep it and accept the friction.
   - Rollback if locked out: `docker exec app rails r 'SiteSetting.enable_discourse_connect=false'`.
-- [ ] **Phase 6** — private categories, tier→group mapping, acceptance tests
+- [x] **Phase 6** — forum set 100% private: `login_required=true` (+ `must_approve_users=false`). Anonymous hits `forum/` → 302 to `/session/sso` (nothing visible without a Ghost-member SSO login). DoG auto-maps Ghost tiers → Discourse groups on member sync.
+  - **Decision (user):** Ghost private-mode (site password) is KEPT. Member login flow is therefore: enter the site password at `/private/` → sign in as a Ghost member (portal) → open the forum → SSO logs you in. If members struggle with the double gate, disabling Ghost private mode removes the first step (forum stays private via `login_required`).
+  - **Remaining = manual browser tests** (need a real member session): (a) a Ghost member can log into the forum via SSO; (b) cancelling/deleting a member removes forum access via the webhooks; (c) confirm no local Discourse login is possible.
 
 ---
 
