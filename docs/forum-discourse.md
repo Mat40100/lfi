@@ -188,7 +188,24 @@ sudo ./launcher cleanup            # prune old images
 # Discourse data lives in /var/discourse/shared/standalone (Postgres, uploads, backups).
 ```
 
+**Operator TODO (Ghost Admin UI — cannot be done via API)**
+Ghost blocks editing these settings through an integration Admin API key
+(every settings `PUT` returns `501 NotImplementedError`); they must be changed
+by a staff user in Ghost Admin, or (simple JSON fields only) via a direct
+`settings` table write + `docker compose restart ghost`:
+- **Members were disabled** on this blog (`members_enabled=false`,
+  `members_signup_access=none`) — the whole forum-SSO needs Ghost members. Set
+  **Settings → Membership → Access → Subscription access = "Only people I invite"**.
+- **Ghost private mode** (`is_private`, site password) redirects the whole
+  front-end to `/private/`, hiding the members portal so nobody can sign in for
+  SSO. Turn it **off** (Settings → search "private"); the forum stays private via
+  Discourse `login_required`.
+- The **"Forum" nav link** (`https://forum.lol-reminder.fr/`) was added to
+  `settings.navigation` via a direct MySQL write + `restart ghost` (the API 501s).
+
 **Gotchas**
+- **Ghost settings are read-only over the integration Admin API** — see the
+  Operator TODO above; use the Admin UI (or DB + restart for trivial fields).
 - **Applying Caddyfile changes:** `caddy reload` (via the admin API on `:2019`)
   does NOT work in this setup — the admin endpoint is unreachable, so a reload
   fails **silently** and the old config keeps running (symptom: new site gets
