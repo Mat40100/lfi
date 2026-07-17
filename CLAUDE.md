@@ -48,6 +48,7 @@ The live stack lives in `~/lfi` on the server. It tracks this repo (Ghost + MySQ
 
 - **Transactional email (SMTP)** is configured via a server-side `docker-compose.override.yml` that adds `mail__*` env to the `ghost` service; values live in the server `.env` (`MAIL_FROM`, `SMTP_HOST/PORT/SECURE/USER/PASS`). Provider: **Mailjet** (`in-v3.mailjet.com:465` SSL), sending as `noreply@lol-reminder.fr`. This covers staff invites + member magic-links (NOT bulk newsletters — that's Mailgun-only in Ghost). Domain is SPF+DKIM authenticated (`spf.mailjet.com`, `mailjet._domainkey`). Secrets are only in the server `.env` — never commit them.
 - **Private forum (Discourse + Ghost SSO)** — a members-only forum at `forum.lol-reminder.fr`, installed OUTSIDE this compose stack via Discourse's own launcher in `/var/discourse` (standalone container, Postgres+Redis embedded), plus a `DoG` (discourse-on-ghost) connector. Wired to Caddy over the `lfi_web` network. Full runbook + install progress: **`docs/forum-discourse.md`**.
+- **Auto-publishing to Facebook/Instagram (n8n)** — planned but NOT deployed; implementation plan in **`docs/n8n-social-publishing.md`**.
 
 ### Recovery via OVH rescue mode (locked out of SSH)
 
