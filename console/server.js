@@ -5,7 +5,7 @@
 // patched DoG SSO gate requires for forum access. The invite email is sent
 // through the same Mailjet SMTP account Ghost uses.
 //
-// Routes (Caddy proxies lol-reminder.fr/equipe/* here; /equipe/admin* is
+// Routes (Caddy proxies landes-insoumises.fr/equipe/* here; /equipe/admin* is
 // additionally behind Caddy basic_auth):
 //   GET  /equipe/admin              admin page: invite form + invite list
 //   POST /equipe/admin/invite       create invite + send email
@@ -24,9 +24,9 @@ const nodemailer = require('nodemailer');
 
 const config = {
   port: Number(process.env.CONSOLE_PORT || 3300),
-  publicUrl: (process.env.CONSOLE_PUBLIC_URL || 'https://lol-reminder.fr').replace(/\/$/, ''),
+  publicUrl: (process.env.CONSOLE_PUBLIC_URL || 'https://landes-insoumises.fr').replace(/\/$/, ''),
   siteName: process.env.SITE_NAME || 'Dax insoumise',
-  forumUrl: process.env.FORUM_URL || 'https://forum.lol-reminder.fr',
+  forumUrl: process.env.FORUM_URL || 'https://forum.landes-insoumises.fr',
   ghostUrl: (process.env.GHOST_ADMIN_URL || 'http://ghost:2368').replace(/\/$/, ''),
   ghostToken: process.env.GHOST_ADMIN_TOKEN,
   tierId: process.env.EQUIPE_TIER_ID,

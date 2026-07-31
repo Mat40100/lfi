@@ -21,7 +21,7 @@
 Ghost (post publié)
    │  node "Ghost Trigger" (webhook post.published auto-créé)
    ▼
-n8n  (conteneur, réseau lfi_web) ── Caddy TLS ──► n8n.lol-reminder.fr (éditeur web)
+n8n  (conteneur, réseau lfi_web) ── Caddy TLS ──► n8n.landes-insoumises.fr (éditeur web)
    │
    ├─► Facebook Graph API  →  POST /{page-id}/feed        (post lien sur la Page)
    └─► Instagram Graph API →  /media puis /media_publish  (image + légende)
@@ -29,7 +29,7 @@ n8n  (conteneur, réseau lfi_web) ── Caddy TLS ──► n8n.lol-reminder.fr
 
 ## Prérequis
 
-- [ ] **DNS** : `A n8n.lol-reminder.fr → 37.59.103.153` (zone OVH, comme `forum`)
+- [ ] **DNS** : `A n8n.landes-insoumises.fr → 37.59.103.153` (zone OVH, comme `forum`)
 - [ ] **Page Facebook** (l'API ne publie que sur une Page, pas un profil)
 - [ ] **Compte Instagram Creator ou Business** (gratuit — conversion dans
       l'app : Paramètres → Compte → Passer à un compte professionnel),
@@ -48,11 +48,11 @@ n8n  (conteneur, réseau lfi_web) ── Caddy TLS ──► n8n.lol-reminder.fr
     image: docker.n8n.io/n8nio/n8n:1.x        # épingler une version précise
     restart: unless-stopped
     environment:
-      N8N_HOST: n8n.lol-reminder.fr
+      N8N_HOST: n8n.landes-insoumises.fr
       N8N_PROTOCOL: https
       N8N_PORT: 5678
-      WEBHOOK_URL: https://n8n.lol-reminder.fr/
-      N8N_EDITOR_BASE_URL: https://n8n.lol-reminder.fr/
+      WEBHOOK_URL: https://n8n.landes-insoumises.fr/
+      N8N_EDITOR_BASE_URL: https://n8n.landes-insoumises.fr/
       N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}   # openssl rand -hex 24 → .env
       GENERIC_TIMEZONE: Europe/Paris
       TZ: Europe/Paris
@@ -72,7 +72,7 @@ n8n  (conteneur, réseau lfi_web) ── Caddy TLS ──► n8n.lol-reminder.fr
 ### 2. Bloc Caddy (`caddy/Caddyfile`)
 
 ```
-n8n.lol-reminder.fr {
+n8n.landes-insoumises.fr {
     reverse_proxy n8n:5678        # WebSockets de l'éditeur gérés auto
     encode gzip zstd
     log {

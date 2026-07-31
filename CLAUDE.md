@@ -36,9 +36,9 @@ Going to production: currently IP-only — `GHOST_URL=http://<public-ip>` in `.e
 
 ## Production server
 
-- **Host:** `37.59.103.153` (OVH, eu-west, Ubuntu cloud image), domain **`lol-reminder.fr`** (+ `www`), DNS on OVH nameservers.
-- **URL:** served over **HTTPS** — `GHOST_URL=https://lol-reminder.fr`, `CADDY_SITE_ADDRESS=lol-reminder.fr www.lol-reminder.fr`. Caddy auto-manages the Let's Encrypt cert; `www` and `:80` redirect to the apex HTTPS site.
-- **Ghost is in private mode** (members-only) — the front-end redirects to `/private/`. Toggle in Ghost Admin → Settings → Access.
+- **Host:** `37.59.103.153` (OVH, eu-west, Ubuntu cloud image), domain **`landes-insoumises.fr`** (+ `www`), DNS on OVH nameservers.
+- **URL:** served over **HTTPS** — `GHOST_URL=https://landes-insoumises.fr`, `CADDY_SITE_ADDRESS=landes-insoumises.fr www.landes-insoumises.fr`. Caddy auto-manages the Let's Encrypt cert; `www` and `:80` redirect to the apex HTTPS site.
+- **Ghost is public** (private mode OFF since phase 7; newsletter signup open to all). Team/forum access is gated by the hidden Équipe tier, not by site access. Toggle in Ghost Admin → Settings → Access.
 - **SSH:** `ssh ubuntu@37.59.103.153 -i ~/.ssh/id_lfi` — login user is `ubuntu`, key-only auth. The `id_lfi` ed25519 keypair lives on this workstation (`~/.ssh/id_lfi` / `.pub`); its public key is authorized on the box.
 - If you hit `Too many authentication failures`, the client is offering too many keys before the right one — force it: add `-o IdentitiesOnly=yes`, or use a `Host` entry in `~/.ssh/config` pinning `IdentityFile ~/.ssh/id_lfi`.
 
@@ -46,9 +46,9 @@ Going to production: currently IP-only — `GHOST_URL=http://<public-ip>` in `.e
 
 The live stack lives in `~/lfi` on the server. It tracks this repo (Ghost + MySQL + Caddy + Umami), plus **one server-only addition** — so edit prod config **on the server** and recreate there (`docker compose up -d <svc>`, or `caddy reload` for a zero-downtime Caddyfile change); don't assume a local `make prod` reproduces it:
 
-- **Transactional email (SMTP)** is configured via a server-side `docker-compose.override.yml` that adds `mail__*` env to the `ghost` service; values live in the server `.env` (`MAIL_FROM`, `SMTP_HOST/PORT/SECURE/USER/PASS`). Provider: **Mailjet** (`in-v3.mailjet.com:465` SSL), sending as `noreply@lol-reminder.fr`. This covers staff invites + member magic-links (NOT bulk newsletters — that's Mailgun-only in Ghost). Domain is SPF+DKIM authenticated (`spf.mailjet.com`, `mailjet._domainkey`). Secrets are only in the server `.env` — never commit them.
-- **Private forum (Discourse + Ghost SSO)** — a team-only forum at `forum.lol-reminder.fr`, installed OUTSIDE this compose stack via Discourse's own launcher in `/var/discourse` (standalone container, Postgres+Redis embedded), plus a `DoG` (discourse-on-ghost) connector patched with a tier gate (`dog/tier-gate.patch`): only members with the hidden **Équipe tier** can SSO in; plain (newsletter) members are redirected to a landing page. Full runbook + install progress: **`docs/forum-discourse.md`**.
-- **Team console** (`console/`, service `console` in the server override) — invite system at `https://lol-reminder.fr/equipe/admin` (Caddy basic_auth): sends single-use e-mail invites that auto-create the Ghost member with the comped Équipe tier (= forum access). Newsletter signup is public; the tier is what separates team from subscribers. Details in `docs/forum-discourse.md` (Phase 7).
+- **Transactional email (SMTP)** is configured via a server-side `docker-compose.override.yml` that adds `mail__*` env to the `ghost` service; values live in the server `.env` (`MAIL_FROM`, `SMTP_HOST/PORT/SECURE/USER/PASS`). Provider: **Mailjet** (`in-v3.mailjet.com:465` SSL), sending as `noreply@landes-insoumises.fr`. This covers staff invites + member magic-links (NOT bulk newsletters — that's Mailgun-only in Ghost). Domain is SPF+DKIM authenticated (`spf.mailjet.com`, `mailjet._domainkey`). Secrets are only in the server `.env` — never commit them.
+- **Private forum (Discourse + Ghost SSO)** — a team-only forum at `forum.landes-insoumises.fr`, installed OUTSIDE this compose stack via Discourse's own launcher in `/var/discourse` (standalone container, Postgres+Redis embedded), plus a `DoG` (discourse-on-ghost) connector patched with a tier gate (`dog/tier-gate.patch`): only members with the hidden **Équipe tier** can SSO in; plain (newsletter) members are redirected to a landing page. Full runbook + install progress: **`docs/forum-discourse.md`**.
+- **Team console** (`console/`, service `console` in the server override) — invite system at `https://landes-insoumises.fr/equipe/admin` (Caddy basic_auth): sends single-use e-mail invites that auto-create the Ghost member with the comped Équipe tier (= forum access). Newsletter signup is public; the tier is what separates team from subscribers. Details in `docs/forum-discourse.md` (Phase 7).
 - **Auto-publishing to Facebook/Instagram (n8n)** — planned but NOT deployed; implementation plan in **`docs/n8n-social-publishing.md`**.
 
 ### Recovery via OVH rescue mode (locked out of SSH)
