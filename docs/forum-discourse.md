@@ -66,8 +66,12 @@ wired together only at the Docker **network** level (`lfi_web`) and via Caddy.
   - ⚠️ **Ghost private-mode (site password) conflicts with member login**: it redirects the whole front-end to `/private/`, so members can't reach the portal to sign in for SSO. Decide: turn OFF Ghost private mode (recommended — gate the *forum* via Discourse `login_required` instead), or keep it and accept the friction.
   - Rollback if locked out: `docker exec app rails r 'SiteSetting.enable_discourse_connect=false'`.
 - [x] **Phase 6** — forum set 100% private: `login_required=true` (+ `must_approve_users=false`). Anonymous hits `forum/` → 302 to `/session/sso` (nothing visible without a Ghost-member SSO login). DoG auto-maps Ghost tiers → Discourse groups on member sync.
-  - **Decision (user):** Ghost private-mode (site password) is KEPT. Member login flow is therefore: enter the site password at `/private/` → sign in as a Ghost member (portal) → open the forum → SSO logs you in. If members struggle with the double gate, disabling Ghost private mode removes the first step (forum stays private via `login_required`).
+  - **Decision (user, superseded):** private mode was initially kept, later turned OFF (site is public, newsletter signup open — see Phase 7).
   - **Remaining = manual browser tests** (need a real member session): (a) a Ghost member can log into the forum via SSO; (b) cancelling/deleting a member removes forum access via the webhooks; (c) confirm no local Discourse login is possible.
+- [x] **Phase 7 (2026-07-21) — Équipe tier gate + invite console.** Newsletter signup is now public (`members_signup_access=all`), so forum access is restricted to members holding the hidden **Équipe tier** (id `6a5f456f593d38000179072b`, slug `equipe`, visibility none, created via Admin API — works without Stripe, comped via `PUT /members/<id>` with `tiers:[{id}]`).
+  - **DoG tier gate** — image `lfi-dog:v0.3.0-lfi.1` = pinned v0.3.0 + `dog/tier-gate.patch` (applied in the Dockerfile). SSO is refused to members without an active `DOG_SSO_REQUIRED_TIER_SLUG` (=`equipe`) tier; they are 302'd to `DOG_SSO_DENIED_REDIRECT` (=`https://lol-reminder.fr/equipe/reserve`). Both vars in `dog/dog.env`.
+  - **Team console** (`console/`, image `lfi-console:v1.0.0`) — plain Node + nodemailer, service `console` in the server compose override, state in `data/console/invites.json`. Admin page `https://lol-reminder.fr/equipe/admin` (Caddy `basic_auth`, user `mathieu`): create invite → e-mail sent via Mailjet with a single-use, 7-day, email-bound link `/equipe/invite/<token>`; accepting creates/updates the Ghost member with label `equipe` + comped Équipe tier and triggers a Ghost magic-link. Also serves `/equipe/reserve` (denied landing) and `/equipe/health`. Config: `console/console.env` (server-only; template in `console/console.env.example`).
+  - **Tested end-to-end** (invite → mail → accept → member+tier → magic-link). Remaining manual check: a tierless member hitting the forum should land on `/equipe/reserve`.
 
 ---
 
@@ -206,6 +210,12 @@ by a staff user in Ghost Admin, or (simple JSON fields only) via a direct
 **Gotchas**
 - **Ghost settings are read-only over the integration Admin API** — see the
   Operator TODO above; use the Admin UI (or DB + restart for trivial fields).
+- **Ghost Admin API auth only works via the canonical public URL** — the same
+  integration JWT gets `403 Authorization failed` on `http://ghost:2368` but 200
+  on `https://lol-reminder.fr`. Point every API client (DoG, console) at the
+  public URL.
+- **`docker compose restart` does NOT reload `env_file` changes** — use
+  `docker compose up -d --force-recreate <svc>` after editing a service's env file.
 - **Applying Caddyfile changes:** `caddy reload` (via the admin API on `:2019`)
   does NOT work in this setup — the admin endpoint is unreachable, so a reload
   fails **silently** and the old config keeps running (symptom: new site gets

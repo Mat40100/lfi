@@ -1,0 +1,11 @@
+{
+  "name": "lfi-console",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Team console for Dax insoumise: member invites with auto-comped forum tier.",
+  "main": "server.js",
+  "type": "commonjs",
+  "dependencies": {
+    "nodemailer": "^6.9.14"
+  }
+}

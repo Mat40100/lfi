@@ -1,0 +1,60 @@
+diff --git a/src/controllers/sso.ts b/src/controllers/sso.ts
+index 777a1bc..2a8b683 100644
+--- a/src/controllers/sso.ts
++++ b/src/controllers/sso.ts
+@@ -20,6 +20,9 @@ export class SSOController {
+ 	private readonly _login: string;
+ 	private readonly _jwtRedirect: string;
+ 	private readonly _corsOrigin: string;
++	// LFI patch: restrict SSO to members holding a specific active tier.
++	private readonly _requiredTierSlug = process.env.DOG_SSO_REQUIRED_TIER_SLUG ?? '';
++	private readonly _deniedRedirect = process.env.DOG_SSO_DENIED_REDIRECT ?? '';
+ 
+ 	constructor() {
+ 		const config = inject(Configuration);
+@@ -99,6 +102,12 @@ export class SSOController {
+ 			return;
+ 		}
+ 
++		// LFI patch: members without the required tier never reach Discourse.
++		if (!this.memberHasRequiredTier(memberResponse)) {
++			response.redirect(this.deniedRedirect());
++			return;
++		}
++
+ 		const discourseRedirect = rawDiscoursePayload.get('return_sso_url')!;
+ 		const memberPayload = this.convertGhostMemberToDiscourseSSO(memberResponse, rawDiscoursePayload.get('nonce')!);
+ 
+@@ -153,12 +162,32 @@ export class SSOController {
+ 			return;
+ 		}
+ 
++		// LFI patch: members without the required tier never reach Discourse.
++		if (!this.memberHasRequiredTier(member)) {
++			response.json({redirect: this.deniedRedirect()});
++			return;
++		}
++
+ 		const discourseRedirect = rawDiscoursePayload.get('return_sso_url')!;
+ 		const memberPayload = this.convertGhostMemberToDiscourseSSO(member, rawDiscoursePayload.get('nonce')!);
+ 
+ 		response.json({redirect: await this.addEncodedPayloadToDiscourseReturnUrl(memberPayload, discourseRedirect)});
+ 	}
+ 
++	// LFI patch
++	private memberHasRequiredTier(member: GhostMemberWithSubscriptions): boolean {
++		if (!this._requiredTierSlug) {
++			return true;
++		}
++
++		return member.subscriptions.some(({tier}) => Boolean(tier && tier.active && tier.slug === this._requiredTierSlug));
++	}
++
++	// LFI patch
++	private deniedRedirect(): string {
++		return this._deniedRedirect || this._ghostService.resolvePublic('/', '');
++	}
++
+ 	private async addEncodedPayloadToDiscourseReturnUrl(payload: DiscourseSSOResponse, urlBase: string) {
+ 		// @ts-expect-error all values of DiscourseSSOResponse are strings
+ 		const typeSafePayload = payload as Record<string, string>;
