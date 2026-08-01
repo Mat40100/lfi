@@ -1,7 +1,7 @@
 # Custom Ghost image.
 # Extends the official Ghost image and bakes in the system packages
 # needed to run, monitor, and back up the instance reliably.
-FROM ghost:5-alpine
+FROM ghost:6-alpine
 
 USER root
 

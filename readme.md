@@ -7,7 +7,7 @@ and reverse-proxied by [Caddy](https://caddyserver.com/) (not nginx).
 
 | Service | Image                       | Role                                   |
 |---------|-----------------------------|----------------------------------------|
-| `ghost` | custom (`./ghost/Dockerfile`, extends `ghost:5-alpine`) | The publishing app |
+| `ghost` | custom (`./ghost/Dockerfile`, extends `ghost:6-alpine`) | The publishing app |
 | `mysql` | `mysql:8.0`                 | Database                               |
 | `caddy` | `caddy:2-alpine`            | Reverse proxy + automatic HTTPS        |
 
