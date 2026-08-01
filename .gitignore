@@ -1,6 +1,7 @@
 # Secrets — never commit
 .env
 dog/dog.env
+console/console.env
 
 # IDE
 .idea/
@@ -10,3 +11,4 @@ data/
 
 # Server-side backups (Caddyfile/.env/compose snapshots)
 *.bak.*
+*.bak-*
