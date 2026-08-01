@@ -1,5 +1,5 @@
 diff --git a/src/controllers/sso.ts b/src/controllers/sso.ts
-index 777a1bc..2a8b683 100644
+index 777a1bc..6eb29d3 100644
 --- a/src/controllers/sso.ts
 +++ b/src/controllers/sso.ts
 @@ -20,6 +20,9 @@ export class SSOController {
@@ -17,7 +17,7 @@ index 777a1bc..2a8b683 100644
  		}
  
 +		// LFI patch: members without the required tier never reach Discourse.
-+		if (!this.memberHasRequiredTier(memberResponse)) {
++		if (!(await this.memberHasRequiredTier(memberResponse))) {
 +			response.redirect(this.deniedRedirect());
 +			return;
 +		}
@@ -25,12 +25,12 @@ index 777a1bc..2a8b683 100644
  		const discourseRedirect = rawDiscoursePayload.get('return_sso_url')!;
  		const memberPayload = this.convertGhostMemberToDiscourseSSO(memberResponse, rawDiscoursePayload.get('nonce')!);
  
-@@ -153,12 +162,32 @@ export class SSOController {
+@@ -153,12 +162,39 @@ export class SSOController {
  			return;
  		}
  
 +		// LFI patch: members without the required tier never reach Discourse.
-+		if (!this.memberHasRequiredTier(member)) {
++		if (!(await this.memberHasRequiredTier(member))) {
 +			response.json({redirect: this.deniedRedirect()});
 +			return;
 +		}
@@ -42,12 +42,19 @@ index 777a1bc..2a8b683 100644
  	}
  
 +	// LFI patch
-+	private memberHasRequiredTier(member: GhostMemberWithSubscriptions): boolean {
++	private async memberHasRequiredTier(member: GhostMemberWithSubscriptions): Promise<boolean> {
 +		if (!this._requiredTierSlug) {
 +			return true;
 +		}
 +
-+		return member.subscriptions.some(({tier}) => Boolean(tier && tier.active && tier.slug === this._requiredTierSlug));
++		// Ghost 5 exposed comped tiers in the member session subscriptions; Ghost 6
++		// returns an empty array there for comped members, so fall back to the Admin API.
++		if (member.subscriptions.some(({tier}) => Boolean(tier && tier.active && tier.slug === this._requiredTierSlug))) {
++			return true;
++		}
++
++		const adminMember = await this._ghostService.getMemberWithTiersByEmail(member.email);
++		return Boolean(adminMember && adminMember.tiers.some(tier => tier.active && tier.slug === this._requiredTierSlug));
 +	}
 +
 +	// LFI patch
@@ -58,3 +65,32 @@ index 777a1bc..2a8b683 100644
  	private async addEncodedPayloadToDiscourseReturnUrl(payload: DiscourseSSOResponse, urlBase: string) {
  		// @ts-expect-error all values of DiscourseSSOResponse are strings
  		const typeSafePayload = payload as Record<string, string>;
+diff --git a/src/services/ghost.ts b/src/services/ghost.ts
+index 0b8d2e2..9c3574a 100644
+--- a/src/services/ghost.ts
++++ b/src/services/ghost.ts
+@@ -191,6 +191,24 @@ export class GhostService {
+ 		}
+ 	}
+ 
++	// LFI patch: tier lookup for the SSO gate (Admin API still reports comped tiers).
++	async getMemberWithTiersByEmail(email: string): Promise<GhostMemberWithTiers | false> {
++		try {
++			const response = await this._api.members.browse({filter: `email:${email}`, include: 'tiers'});
++			if (response?.length !== 1) {
++				return false;
++			}
++
++			return response[0] as unknown as GhostMemberWithTiers;
++		} catch (error: unknown) {
++			if (isObject(error) && error.type === 'NotFoundError') {
++				return false;
++			}
++
++			throw error;
++		}
++	}
++
+ 	async getTiers(): Promise<GhostTier[]> {
+ 		const headers = {
+ 			authorization: this.getAuthHeader(),
