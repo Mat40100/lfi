@@ -16,8 +16,13 @@ python3 - <<'PYEOF'
 import re
 p = 'caddy/Caddyfile'
 s = open(p).read()
+# Match the whole handle block INCLUDING one level of nested braces (basic_auth):
+# a naive non-greedy `.*?\}` stops at the inner brace and corrupts the file.
 block = re.compile(
-    r'[ \t]*# Team console admin.*?\n[ \t]*handle /equipe/admin\* \{.*?\n[ \t]*\}\n',
+    r'[ \t]*# Team console admin.*?\n'
+    r'[ \t]*handle /equipe/admin\* \{'
+    r'(?:[^{}]|\{[^{}]*\})*'
+    r'\}\n',
     re.DOTALL)
 new = """    # Team console admin (invites) — auth = Ghost Admin session (role Owner/
     # Administrator), validated by the console app itself. Served under /ghost
@@ -32,6 +37,13 @@ open(p, 'w').write(s2)
 print("Caddyfile updated")
 PYEOF
 
+echo "== 2b/5 validate Caddyfile before restarting (auto-rollback if invalid) =="
+if ! docker compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile; then
+  echo "INVALID Caddyfile — restoring backup, caddy untouched"
+  cp caddy/Caddyfile.bak-console-v1.1.0 caddy/Caddyfile
+  exit 1
+fi
+
 echo "== 3/5 build image lfi-console:v1.1.0 =="
 docker build -t lfi-console:v1.1.0 console/
 
@@ -41,7 +53,12 @@ docker compose up -d console
 docker compose restart caddy
 
 echo "== 5/5 verify =="
-sleep 3
+for i in $(seq 1 15); do
+  code=$(curl -sk -o /dev/null -w '%{http_code}' https://landes-insoumises.fr/ || true)
+  [ "$code" = "200" ] && break
+  sleep 2
+done
+curl -sk -o /dev/null -w "site (expect 200): %{http_code}\n" https://landes-insoumises.fr/
 curl -sk -o /dev/null -w "health (expect 200): %{http_code}\n"  https://landes-insoumises.fr/equipe/health
 curl -sk -o /dev/null -w "console no-cookie (expect 401): %{http_code}\n" https://landes-insoumises.fr/ghost/console
 curl -sk -o /dev/null -w "legacy /equipe/admin (expect 303): %{http_code}\n" https://landes-insoumises.fr/equipe/admin
