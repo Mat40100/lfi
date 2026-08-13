@@ -5,12 +5,15 @@
 // patched DoG SSO gate requires for forum access. The invite email is sent
 // through the same Mailjet SMTP account Ghost uses.
 //
-// Routes (Caddy proxies landes-insoumises.fr/equipe/* here; /equipe/admin* is
-// additionally behind Caddy basic_auth):
-//   GET  /equipe/admin              admin page: invite form + invite list
-//   POST /equipe/admin/invite       create invite + send email
-//   POST /equipe/admin/resend       re-send email, extend expiry
-//   POST /equipe/admin/revoke       revoke a pending invite
+// Routes (Caddy proxies landes-insoumises.fr/equipe/* and /ghost/console* here).
+// Admin routes live under /ghost/console so the browser sends the Ghost Admin
+// session cookie (scoped to path /ghost); auth = a valid Ghost staff session
+// with an allowed role. No separate password.
+//   GET  /ghost/console             admin page: invite form + invite list
+//   POST /ghost/console/invite      create invite + send email
+//   POST /ghost/console/resend      re-send email, extend expiry
+//   POST /ghost/console/revoke      revoke a pending invite
+//   GET  /equipe/admin              301 → /ghost/console (legacy URL)
 //   GET  /equipe/invite/<token>     public accept page
 //   POST /equipe/invite/<token>     accept: comp tier + trigger magic-link
 //   GET  /equipe/reserve            "forum reserved" landing (DoG denied redirect)
@@ -30,6 +33,7 @@ const config = {
   ghostUrl: (process.env.GHOST_ADMIN_URL || 'http://ghost:2368').replace(/\/$/, ''),
   ghostToken: process.env.GHOST_ADMIN_TOKEN,
   tierId: process.env.EQUIPE_TIER_ID,
+  allowedRoles: (process.env.CONSOLE_ALLOWED_ROLES || 'Owner,Administrator').split(',').map((r) => r.trim()),
   invitesFile: process.env.INVITES_FILE || '/data/invites.json',
   inviteTtlDays: Number(process.env.INVITE_TTL_DAYS || 7),
   mailFrom: process.env.MAIL_FROM,
@@ -106,20 +110,50 @@ async function ghostApi(method, apiPath, payload) {
   return body;
 }
 
+// Authenticate an admin request against the caller's Ghost Admin session: the
+// admin UI is served under /ghost so the browser sends the ghost-admin-api-session
+// cookie; forwarding it to the (canonical, public) Admin API tells us who it is.
+async function ghostStaffFromCookie(req) {
+  const cookie = req.headers.cookie || '';
+  if (!cookie.includes('ghost-admin-api-session=')) return null;
+  try {
+    const res = await fetch(`${config.publicUrl}/ghost/api/admin/users/me/?include=roles`, {
+      headers: { cookie, 'Accept-Version': 'v5.0' },
+    });
+    if (!res.ok) return null;
+    const user = (await res.json()).users?.[0];
+    const roles = (user?.roles || []).map((r) => r.name);
+    return roles.some((r) => config.allowedRoles.includes(r)) ? user : null;
+  } catch (error) {
+    console.error('ghost session check failed:', error.message);
+    return null;
+  }
+}
+
 // Create the member with the Équipe tier comped, or add the tier if the member
 // already exists (e.g. was already a newsletter subscriber).
 async function compMember(email, name) {
   const filter = encodeURIComponent(`email:'${email.replace(/'/g, '')}'`);
-  const found = await ghostApi('GET', `/members/?filter=${filter}&include=tiers`);
+  const found = await ghostApi('GET', `/members/?filter=${filter}&include=tiers,newsletters`);
   const existing = found.members?.[0];
 
   if (existing) {
-    const tiers = (existing.tiers || []).map((t) => ({ id: t.id }));
-    if (!tiers.some((t) => t.id === config.tierId)) tiers.push({ id: config.tierId });
-    await ghostApi('PUT', `/members/${existing.id}/`, {
-      members: [{ tiers, labels: mergedLabels(existing) }],
+    if ((existing.tiers || []).some((t) => t.id === config.tierId)) return existing.id;
+    // Ghost 6 without Stripe silently ignores `tiers` on member *updates*
+    // (member-repository.js: needsProducts = stripeConfigured && data.products),
+    // but honors them on *creation* — so recreate the member with the tier.
+    await ghostApi('DELETE', `/members/${existing.id}/`);
+    const recreated = await ghostApi('POST', '/members/', {
+      members: [{
+        email,
+        name: name || existing.name || null,
+        note: existing.note || null,
+        labels: mergedLabels(existing),
+        newsletters: (existing.newsletters || []).map((n) => ({ id: n.id })),
+        tiers: [{ id: config.tierId }],
+      }],
     });
-    return existing.id;
+    return recreated.members[0].id;
   }
 
   const created = await ghostApi('POST', '/members/', {
@@ -234,15 +268,15 @@ function page(title, body) {
 
 const statusLabels = { pending: 'En attente', accepted: 'Acceptée', expired: 'Expirée', revoked: 'Révoquée' };
 
-function adminPage(invites, flash) {
+function adminPage(invites, flash, staff) {
   const rows = invites
     .slice()
     .sort((a, b) => b.created_at - a.created_at)
     .map((invite) => {
       const state = inviteState(invite);
       const actions = state === 'pending' || state === 'expired'
-        ? `<form method="post" action="/equipe/admin/resend" style="display:inline"><input type="hidden" name="id" value="${invite.id}"><button class="small ghostbtn">Renvoyer</button></form>
-           <form method="post" action="/equipe/admin/revoke" style="display:inline"><input type="hidden" name="id" value="${invite.id}"><button class="small ghostbtn">Révoquer</button></form>`
+        ? `<form method="post" action="/ghost/console/resend" style="display:inline"><input type="hidden" name="id" value="${invite.id}"><button class="small ghostbtn">Renvoyer</button></form>
+           <form method="post" action="/ghost/console/revoke" style="display:inline"><input type="hidden" name="id" value="${invite.id}"><button class="small ghostbtn">Révoquer</button></form>`
         : '';
       return `<tr><td>${escapeHtml(invite.email)}</td><td>${escapeHtml(invite.name || '—')}</td>
         <td><span class="badge b-${state}">${statusLabels[state]}</span></td>
@@ -255,11 +289,12 @@ function adminPage(invites, flash) {
   return page('Console équipe', `
     <h1>Console équipe</h1>
     <p class="muted">Invitez quelqu'un : il ou elle reçoit un e-mail avec un lien personnel qui active
-    son compte membre et l'accès au <a href="${config.forumUrl}">forum</a>.</p>
+    son compte membre et l'accès au <a href="${config.forumUrl}">forum</a>.
+    ${staff ? `<br>Connecté·e en tant que <strong>${escapeHtml(staff.name || staff.email)}</strong> (session Ghost Admin).` : ''}</p>
     ${flash || ''}
     <div class="card">
       <h2 style="margin-top:0">Nouvelle invitation</h2>
-      <form method="post" action="/equipe/admin/invite">
+      <form method="post" action="/ghost/console/invite">
         <label for="email">E-mail</label>
         <input type="email" id="email" name="email" required placeholder="prenom@exemple.fr">
         <label for="name">Prénom / nom (optionnel, utilisé dans l'e-mail)</label>
@@ -316,7 +351,7 @@ function redirect(res, location) {
   res.end();
 }
 
-// Cross-site POSTs could ride on the browser-cached basic_auth credentials.
+// Cross-site POSTs could ride on the Ghost Admin session cookie.
 function sameOrigin(req) {
   const site = req.headers['sec-fetch-site'];
   if (site && site !== 'same-origin' && site !== 'none') return false;
@@ -346,23 +381,45 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // Legacy admin URL (was behind Caddy basic_auth).
     if (route === 'GET /equipe/admin') {
-      const flashes = {
-        invited: '<div class="notice ok">Invitation envoyée ✔</div>',
-        resent: '<div class="notice ok">Invitation renvoyée ✔</div>',
-        revoked: '<div class="notice ok">Invitation révoquée.</div>',
-        mailfail: '<div class="notice err">Invitation créée mais l\'e-mail n\'a pas pu être envoyé — utilisez « Renvoyer ».</div>',
-      };
-      send(res, 200, adminPage(loadInvites(), flashes[url.searchParams.get('m')]));
+      redirect(res, '/ghost/console');
       return;
     }
 
-    if (route.startsWith('POST /equipe/admin/')) {
+    if (url.pathname === '/ghost/console' || url.pathname.startsWith('/ghost/console/')) {
+      const staff = await ghostStaffFromCookie(req);
+      if (!staff) {
+        send(res, 401, messagePage(
+          'Connexion requise',
+          `Cette console est réservée aux administrateur·ices du site.<br>
+           Connectez-vous à <a href="${config.publicUrl}/ghost/">Ghost Admin</a>,
+           puis <a href="/ghost/console">rechargez cette page</a>.`,
+        ));
+        return;
+      }
+
+      if (route === 'GET /ghost/console') {
+        const flashes = {
+          invited: '<div class="notice ok">Invitation envoyée ✔</div>',
+          resent: '<div class="notice ok">Invitation renvoyée ✔</div>',
+          revoked: '<div class="notice ok">Invitation révoquée.</div>',
+          mailfail: '<div class="notice err">Invitation créée mais l\'e-mail n\'a pas pu être envoyé — utilisez « Renvoyer ».</div>',
+        };
+        send(res, 200, adminPage(loadInvites(), flashes[url.searchParams.get('m')], staff));
+        return;
+      }
+
+      if (!route.startsWith('POST /ghost/console/')) {
+        send(res, 404, messagePage('Page introuvable', 'Cette page n\'existe pas.'));
+        return;
+      }
+
       if (!sameOrigin(req)) { send(res, 403, messagePage('Refusé', 'Requête inter-site refusée.')); return; }
       const body = await readBody(req);
       const invites = loadInvites();
 
-      if (route === 'POST /equipe/admin/invite') {
+      if (route === 'POST /ghost/console/invite') {
         const email = String(body.email || '').trim().toLowerCase();
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { send(res, 400, messagePage('Erreur', 'E-mail invalide.')); return; }
         const invite = {
@@ -380,29 +437,29 @@ const server = http.createServer(async (req, res) => {
           await sendInviteEmail(invite);
         } catch (error) {
           console.error('invite mail failed:', error.message);
-          redirect(res, '/equipe/admin?m=mailfail');
+          redirect(res, '/ghost/console?m=mailfail');
           return;
         }
-        redirect(res, '/equipe/admin?m=invited');
+        redirect(res, '/ghost/console?m=invited');
         return;
       }
 
       const invite = invites.find((i) => i.id === body.id);
       if (!invite) { send(res, 404, messagePage('Erreur', 'Invitation introuvable.')); return; }
 
-      if (route === 'POST /equipe/admin/resend') {
+      if (route === 'POST /ghost/console/resend') {
         invite.status = 'pending';
         invite.expires_at = Date.now() + config.inviteTtlDays * 86_400_000;
         saveInvites(invites);
         await sendInviteEmail(invite);
-        redirect(res, '/equipe/admin?m=resent');
+        redirect(res, '/ghost/console?m=resent');
         return;
       }
 
-      if (route === 'POST /equipe/admin/revoke') {
+      if (route === 'POST /ghost/console/revoke') {
         invite.status = 'revoked';
         saveInvites(invites);
-        redirect(res, '/equipe/admin?m=revoked');
+        redirect(res, '/ghost/console?m=revoked');
         return;
       }
     }

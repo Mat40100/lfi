@@ -71,8 +71,28 @@ wired together only at the Docker **network** level (`lfi_web`) and via Caddy.
 - [x] **Phase 7 (2026-07-21) — Équipe tier gate + invite console.** Newsletter signup is now public (`members_signup_access=all`), so forum access is restricted to members holding the hidden **Équipe tier** (id `6a5f456f593d38000179072b`, slug `equipe`, visibility none, created via Admin API — works without Stripe, comped via `PUT /members/<id>` with `tiers:[{id}]`).
   - **DoG tier gate** — image `lfi-dog:v0.3.0-lfi.2` = pinned v0.3.0 + `dog/tier-gate.patch` (applied in the Dockerfile). SSO is refused to members without an active `DOG_SSO_REQUIRED_TIER_SLUG` (=`equipe`) tier; they are 302'd to `DOG_SSO_DENIED_REDIRECT` (=`https://landes-insoumises.fr/equipe/reserve`). Both vars in `dog/dog.env`.
     - Patch v2 (2026-08-01, image `-lfi.2`): **Ghost 6 returns `subscriptions: []` on `/members/api/member` for comped members**, so the original gate (which read the tier off the session's subscriptions) denied everyone after the Ghost 5→6 upgrade. The gate now falls back to the Admin API (`members.browse` with `include=tiers`). Verified both ways: tier-holder reaches `forum…/session/sso_login`, tierless member lands on `/equipe/reserve`.
-  - **Team console** (`console/`, image `lfi-console:v1.0.0`) — plain Node + nodemailer, service `console` in the server compose override, state in `data/console/invites.json`. Admin page `https://landes-insoumises.fr/equipe/admin` (Caddy `basic_auth`, user `mathieu`): create invite → e-mail sent via Mailjet with a single-use, 7-day, email-bound link `/equipe/invite/<token>`; accepting creates/updates the Ghost member with label `equipe` + comped Équipe tier and triggers a Ghost magic-link. Also serves `/equipe/reserve` (denied landing) and `/equipe/health`. Config: `console/console.env` (server-only; template in `console/console.env.example`).
+  - **Team console** (`console/`, image `lfi-console:v1.1.0`) — plain Node + nodemailer, service `console` in the server compose override, state in `data/console/invites.json`. Admin page `https://landes-insoumises.fr/ghost/console` (auth = Ghost Admin session, see Phase 9; formerly `/equipe/admin` + basic_auth): create invite → e-mail sent via Mailjet with a single-use, 7-day, email-bound link `/equipe/invite/<token>`; accepting creates/updates the Ghost member with label `equipe` + comped Équipe tier and triggers a Ghost magic-link. Also serves `/equipe/reserve` (denied landing) and `/equipe/health`. Config: `console/console.env` (server-only; template in `console/console.env.example`).
   - **Tested end-to-end** (invite → mail → accept → member+tier → magic-link). Remaining manual check: a tierless member hitting the forum should land on `/equipe/reserve`.
+- [x] **Phase 9 (2026-08-13) — console v1.1.0: Ghost-Admin-session auth + Ghost 6 tier fix.**
+  - **Auth**: the Caddy `basic_auth` on `/equipe/admin` is gone. The admin UI moved to
+    **`https://landes-insoumises.fr/ghost/console`** (old URL redirects). It is served under
+    the `/ghost` path prefix so the browser sends the `ghost-admin-api-session` cookie
+    (Ghost scopes it to `Path=/ghost`); the console validates it against
+    `GET /ghost/api/admin/users/me/?include=roles` on the canonical public URL and allows
+    roles in `CONSOLE_ALLOWED_ROLES` (default `Owner,Administrator`). So: **any Ghost
+    admin is a console admin, no separate password**, and no re-login as long as the
+    Ghost Admin session lives (~6 months).
+  - **Ghost 6 API regression** (root cause of the 2026-08-13 incident, member
+    `dasse.jean-robert@orange.fr`): member **updates** silently ignore `tiers` when Stripe
+    is not configured (`member-repository.js`: `needsProducts = stripeConfigured && data.products`)
+    — the PUT returns 200 and does nothing. Member **creation** still honors `tiers`.
+    The console now **deletes + recreates** an existing member (preserving name, note,
+    labels, newsletters) to comp the tier. One-off manual comps: direct
+    `INSERT INTO members_products` + `UPDATE members SET status='comped'` (no restart needed).
+  - Deploy: `console/deploy-v1.1.0.sh` (run on the server; edits Caddyfile, rebuilds
+    `lfi-console:v1.1.0`, bumps the override, recreates console + restarts caddy).
+  - ⚠️ Never add team members by hand in Ghost Admin: the `equipe` **label** grants
+    nothing — only the hidden Équipe **tier** does, and only the console (or SQL) can set it.
 - [x] **Phase 8 (2026-07-31) — domain migration `lol-reminder.fr` → `landes-insoumises.fr`.** Everything renamed in one cutover once the OVH zone pointed apex/`www`/`forum` at `37.59.103.153` (watch out: OVH leaves its parking `A` record `213.186.33.5` in place — it must be *deleted*, not just supplemented).
   - **Server config** (`.bak-domain` backups next to each file): `~/lfi/.env` (`GHOST_URL`, `CADDY_SITE_ADDRESS`, `MAIL_FROM`), `caddy/Caddyfile` (forum block), `dog/dog.env`, `console/console.env`, `/var/discourse/containers/app.yml` (`DISCOURSE_HOSTNAME` + notification email) → `docker compose up -d --force-recreate ghost caddy dog console` + `./launcher rebuild app` (+ re-`network connect lfi_web app`, see gotcha).
   - **Absolute URLs in DBs** (not covered by env): Ghost `webhooks.target_url` (2 DoG hooks) and settings `navigation`/`mailgun_domain` (DB `UPDATE … REPLACE` + Ghost restart; table backup `~/ghost-webhooks-settings-backup-20260731-1336.sql`); Discourse `SiteSetting.discourse_connect_url` (via `rails runner`). Posts contained no old-domain URLs; Umami tracker uses the raw IP → untouched.
