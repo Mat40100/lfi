@@ -1,124 +1,98 @@
-# Private forum — Discourse + Ghost SSO (Discourse-on-Ghost)
+# Forum — Discourse (standalone)
 
-> **Living runbook.** This documents a members-only forum built with **Discourse**
-> (forum engine) using **Ghost as the SSO identity provider**, bridged by
-> **Discourse-on-Ghost (DoG)**. Ghost owns accounts + billing; Discourse is the
-> forum; DoG maps Ghost tiers → Discourse groups.
+> **Living runbook** for the private team forum at `https://forum.landes-insoumises.fr`.
 >
-> ⚠️ **This install lives OUTSIDE this repo's `docker-compose.yml`.** Discourse's
-> only officially supported install is its own `discourse_docker` launcher in
-> `/var/discourse` on the prod server — a standalone container (Postgres + Redis
-> embedded), managed with `./launcher`, **not** `docker compose`. Treat this file
-> as the source of truth for that out-of-band piece; keep it updated as things change.
+> ⚠️ **This install lives OUTSIDE this repo's `docker-compose.yml`.** Discourse's only
+> officially supported install is its own `discourse_docker` launcher in `/var/discourse`
+> on the prod server — a standalone container (Postgres + Redis embedded) managed with
+> `./launcher`, **not** `docker compose`. It is wired to the main stack only at the Docker
+> **network** level (`lfi_web`) and through Caddy. Treat this file as the source of truth
+> for that out-of-band piece; keep it updated as things change.
+
+## History — the Ghost SSO bridge (2026-07 → 2026-09-05) is gone
+
+From July 2026 the forum used **Ghost as SSO identity provider**: a *Discourse-on-Ghost*
+(DoG) connector in the compose stack, patched with an "Équipe tier" gate, plus a *team
+console* that e-mailed invites and comped the tier on the Ghost member. We did not like
+coupling forum access to Ghost membership, so on **2026-09-05** the whole bridge was
+removed and the forum returned to **standalone Discourse accounts**:
+
+- Discourse: `enable_discourse_connect=false`, DoG API key / SSO records / `tier_equipe` group deleted.
+- Ghost: custom integration "Forum" (+ its 2 `member.*` webhooks), the hidden Équipe tier
+  and the `equipe` label deleted; former comped members are plain free members.
+- Compose: `dog` and `console` services removed from the server override; Caddy no longer
+  routes `/ghost/api/external_discourse_on_ghost/*`, `/ghost/console*`, `/equipe/*`.
+- Repo: `dog/` and `console/` deleted (see `git log -- dog console` for the code).
+- Rollback material on the server: `~/sso-teardown-backup-20260905/` (old override,
+  Caddyfile, `dog.env`, `console.env`, `data/console`, dump of the Ghost tables touched).
+  Teardown script: `~/sso-teardown.sh`.
+
+Ghost and the forum are now **independent**: newsletter signup on the site is public and
+grants nothing on the forum; the "Forum" link in Ghost's navigation is just a link.
 
 ## Coordinates
 
 | | |
 |---|---|
 | Server | `37.59.103.153` (OVH, Ubuntu) — `ssh ubuntu@37.59.103.153 -i ~/.ssh/id_lfi` |
-| Ghost site | `https://landes-insoumises.fr` (private mode) |
 | Forum | `https://forum.landes-insoumises.fr` (Discourse, behind Caddy) |
 | Discourse install | `/var/discourse` (launcher), container name `app` |
-| DoG | container in the main `~/lfi` compose stack (Node service) |
+| Data | `/var/discourse/shared/standalone` (Postgres, uploads, backups) |
 | Compose network shared with Caddy | `lfi_web` |
 | Email | Mailjet SMTP (`in-v3.mailjet.com`), sender `noreply@landes-insoumises.fr` |
+| Admins | `mathieu.d`, `Jean-Robert_DASSE` |
 
 ## Architecture
 
 ```
-Member → forum.landes-insoumises.fr ──(Caddy, TLS)──► Discourse app:80 (Postgres+Redis internal)
-   "Login" → DiscourseConnect →
-        https://landes-insoumises.fr/ghost/api/external_discourse_on_ghost/sso
-                    │  (Caddy routes THIS path prefix to DoG, not to Ghost)
-                    ▼
-              DoG (Node) ──► Ghost Admin API (verify member + tier)
-                    │
-                    ▼  HMAC-signed identity
-        member logged into Discourse, placed in the group mapped from the Ghost tier
+Browser → forum.landes-insoumises.fr ──(Caddy, TLS)──► Discourse `app`:80 (Postgres+Redis internal)
+                                                        accounts, login, invites: Discourse itself
+Browser → landes-insoumises.fr        ──(Caddy, TLS)──► Ghost  (no relation to forum accounts)
 ```
 
-Caddy (already running, in a container) is the single TLS terminator for **all**
-hostnames: `landes-insoumises.fr` (Ghost), `forum.landes-insoumises.fr` (Discourse),
-`:8080` (Umami). Discourse does **not** manage its own certs (its Let's Encrypt
-template is disabled) and does **not** publish 80/443 (Caddy owns those). Caddy
-reaches Discourse container-to-container over the `lfi_web` network.
+Caddy (the compose service) is the single TLS terminator for **all** hostnames:
+`landes-insoumises.fr` (Ghost), `forum.landes-insoumises.fr` (Discourse), `:8080` (Umami).
+Discourse does **not** manage its own certs (its Let's Encrypt templates are disabled) and
+does **not** publish 80/443 (`expose: []` — Caddy owns them). Caddy reaches the `app`
+container by name over `lfi_web`.
 
-## Why external to docker-compose
+## Access model (standalone)
 
-Discourse upstream only supports the launcher install. Do **not** try to fold it
-into `~/lfi/docker-compose.yml`. The two stacks coexist on the same host and are
-wired together only at the Docker **network** level (`lfi_web`) and via Caddy.
+Discourse site settings (all set, verified 2026-09-05):
 
----
+| Setting | Value | Effect |
+|---|---|---|
+| `login_required` | `true` | Nothing is visible anonymously — the forum is 100 % private. |
+| `invite_only` | `true` | No self-signup. New people get in only through a **Discourse invite** (Admin → Utilisateurs → Inviter, or the "Inviter" button in the user menu); the invite e-mail goes out via Mailjet and the invitee picks a password. |
+| `enable_local_logins` / `enable_local_logins_via_email` | `true` | Password login **and** "connexion par lien e-mail". |
+| `must_approve_users` | `false` | No manual approval step. |
+| `force_https` | `true` | |
 
-## Install log / progress
+**Users created during the SSO era have no password.** They use « Mot de passe oublié »
+(or the e-mail-link login) once on `https://forum.landes-insoumises.fr/login`; the mail
+arrives from `noreply@landes-insoumises.fr`.
 
-- [x] **Phase 0 — prerequisites**
-  - [x] 2 GB swap created + persisted (`/swapfile`, in `/etc/fstab`) — Discourse requires swap
-  - [x] DNS `A forum.landes-insoumises.fr → 37.59.103.153` (OVH zone)
-  - [x] Admin email = `mathieu.dolhen@gmail.com`
-- [x] **Phase 1a** — `git clone discourse_docker → /var/discourse`
-- [x] **Phase 1b** — `containers/app.yml` (hostname `forum.`, Mailjet SMTP, locale fr, `expose: []`, no Discourse TLS); bootstrapped OK, container `app` running (`--restart=always`)
-- [x] **Phase 2** — `app` joined to `lfi_web`; Caddy `forum.landes-insoumises.fr` block added; HTTPS live (LE cert issued via TLS-ALPN-01). Forum reachable, shows `finish_installation`.
-- [x] **Phase 3** — admin account created + activated via Mailjet email: `mathieu.d <mathieu.dolhen@gmail.com>` (active, approved). Confirms Discourse SMTP works end-to-end.
-- [x] **Phase 4** — DoG built (pinned `lfi-dog:v0.3.0`) + deployed as `dog` service (compose override, network `web`, `dog/dog.env`); Caddy `handle`s the `/ghost/api/external_discourse_on_ghost/*` prefix → `dog:3286`, everything else → Ghost. Public `/health` → `Howdy!`. Discourse API key generated via rails; HMAC secret + webhook IDs generated.
-- [x] **Phase 5** — SSO wired. 2 Ghost webhooks created (`member.edited`/`member.deleted` → DoG `hook/<id>`). Ghost member `mathieu.dolhen@gmail.com` created so the Discourse admin survives SSO. DiscourseConnect enabled via rails (`enable_discourse_connect=true`, url→DoG `/sso`, secret = `DOG_DISCOURSE_SHARED_SECRET`). Redirect chain verified end-to-end (Discourse→DoG→Ghost; HMAC accepted).
-  - ⚠️ **Ghost private-mode (site password) conflicts with member login**: it redirects the whole front-end to `/private/`, so members can't reach the portal to sign in for SSO. Decide: turn OFF Ghost private mode (recommended — gate the *forum* via Discourse `login_required` instead), or keep it and accept the friction.
-  - Rollback if locked out: `docker exec app rails r 'SiteSetting.enable_discourse_connect=false'`.
-- [x] **Phase 6** — forum set 100% private: `login_required=true` (+ `must_approve_users=false`). Anonymous hits `forum/` → 302 to `/session/sso` (nothing visible without a Ghost-member SSO login). DoG auto-maps Ghost tiers → Discourse groups on member sync.
-  - **Decision (user, superseded):** private mode was initially kept, later turned OFF (site is public, newsletter signup open — see Phase 7).
-  - **Remaining = manual browser tests** (need a real member session): (a) a Ghost member can log into the forum via SSO; (b) cancelling/deleting a member removes forum access via the webhooks; (c) confirm no local Discourse login is possible.
-- [x] **Phase 7 (2026-07-21) — Équipe tier gate + invite console.** Newsletter signup is now public (`members_signup_access=all`), so forum access is restricted to members holding the hidden **Équipe tier** (id `6a5f456f593d38000179072b`, slug `equipe`, visibility none, created via Admin API — works without Stripe, comped via `PUT /members/<id>` with `tiers:[{id}]`).
-  - **DoG tier gate** — image `lfi-dog:v0.3.0-lfi.2` = pinned v0.3.0 + `dog/tier-gate.patch` (applied in the Dockerfile). SSO is refused to members without an active `DOG_SSO_REQUIRED_TIER_SLUG` (=`equipe`) tier; they are 302'd to `DOG_SSO_DENIED_REDIRECT` (=`https://landes-insoumises.fr/equipe/reserve`). Both vars in `dog/dog.env`.
-    - Patch v2 (2026-08-01, image `-lfi.2`): **Ghost 6 returns `subscriptions: []` on `/members/api/member` for comped members**, so the original gate (which read the tier off the session's subscriptions) denied everyone after the Ghost 5→6 upgrade. The gate now falls back to the Admin API (`members.browse` with `include=tiers`). Verified both ways: tier-holder reaches `forum…/session/sso_login`, tierless member lands on `/equipe/reserve`.
-  - **Team console** (`console/`, image `lfi-console:v1.1.0`) — plain Node + nodemailer, service `console` in the server compose override, state in `data/console/invites.json`. Admin page `https://landes-insoumises.fr/ghost/console` (auth = Ghost Admin session, see Phase 9; formerly `/equipe/admin` + basic_auth): create invite → e-mail sent via Mailjet with a single-use, 7-day, email-bound link `/equipe/invite/<token>`; accepting creates/updates the Ghost member with label `equipe` + comped Équipe tier and triggers a Ghost magic-link. Also serves `/equipe/reserve` (denied landing) and `/equipe/health`. Config: `console/console.env` (server-only; template in `console/console.env.example`).
-  - **Tested end-to-end** (invite → mail → accept → member+tier → magic-link). Remaining manual check: a tierless member hitting the forum should land on `/equipe/reserve`.
-- [x] **Phase 9 (2026-08-13) — console v1.1.0: Ghost-Admin-session auth + Ghost 6 tier fix.**
-  - **Auth**: the Caddy `basic_auth` on `/equipe/admin` is gone. The admin UI moved to
-    **`https://landes-insoumises.fr/ghost/console`** (old URL redirects). It is served under
-    the `/ghost` path prefix so the browser sends the `ghost-admin-api-session` cookie
-    (Ghost scopes it to `Path=/ghost`); the console validates it against
-    `GET /ghost/api/admin/users/me/?include=roles` on the canonical public URL and allows
-    roles in `CONSOLE_ALLOWED_ROLES` (default `Owner,Administrator`). So: **any Ghost
-    admin is a console admin, no separate password**, and no re-login as long as the
-    Ghost Admin session lives (~6 months).
-  - **Ghost 6 API regression** (root cause of the 2026-08-13 incident, member
-    `dasse.jean-robert@orange.fr`): member **updates** silently ignore `tiers` when Stripe
-    is not configured (`member-repository.js`: `needsProducts = stripeConfigured && data.products`)
-    — the PUT returns 200 and does nothing. Member **creation** still honors `tiers`.
-    The console now **deletes + recreates** an existing member (preserving name, note,
-    labels, newsletters) to comp the tier. One-off manual comps: direct
-    `INSERT INTO members_products` + `UPDATE members SET status='comped'` (no restart needed).
-  - Deploy: `console/deploy-v1.1.0.sh` (run on the server; edits Caddyfile, rebuilds
-    `lfi-console:v1.1.0`, bumps the override, recreates console + restarts caddy).
-  - ⚠️ Never add team members by hand in Ghost Admin: the `equipe` **label** grants
-    nothing — only the hidden Équipe **tier** does, and only the console (or SQL) can set it.
-- [x] **Phase 8 (2026-07-31) — domain migration `lol-reminder.fr` → `landes-insoumises.fr`.** Everything renamed in one cutover once the OVH zone pointed apex/`www`/`forum` at `37.59.103.153` (watch out: OVH leaves its parking `A` record `213.186.33.5` in place — it must be *deleted*, not just supplemented).
-  - **Server config** (`.bak-domain` backups next to each file): `~/lfi/.env` (`GHOST_URL`, `CADDY_SITE_ADDRESS`, `MAIL_FROM`), `caddy/Caddyfile` (forum block), `dog/dog.env`, `console/console.env`, `/var/discourse/containers/app.yml` (`DISCOURSE_HOSTNAME` + notification email) → `docker compose up -d --force-recreate ghost caddy dog console` + `./launcher rebuild app` (+ re-`network connect lfi_web app`, see gotcha).
-  - **Absolute URLs in DBs** (not covered by env): Ghost `webhooks.target_url` (2 DoG hooks) and settings `navigation`/`mailgun_domain` (DB `UPDATE … REPLACE` + Ghost restart; table backup `~/ghost-webhooks-settings-backup-20260731-1336.sql`); Discourse `SiteSetting.discourse_connect_url` (via `rails runner`). Posts contained no old-domain URLs; Umami tracker uses the raw IP → untouched.
-  - **Mail**: Mailjet re-validated for the new domain by the operator (SPF/DKIM); Ghost bulk-mail settings set to Mailgun EU (`mailgun_domain=landes-insoumises.fr`, `mailgun_base_url=https://api.eu.mailgun.net/v3`, key in DB settings only).
-  - Note: Discourse `force_https` is `false` (pre-existing) — SSO return URLs are emitted as `http://` and rely on Caddy's HTTP→HTTPS redirect; enabling it is the cleaner setup if the extra hop ever causes trouble.
+Category visibility: all categories are public *inside* the forum (no group restriction).
+Restrict a category to a group via Category → Sécurité if needed.
 
----
+## Discourse config (`/var/discourse/containers/app.yml`)
 
-## Phase 1b — Discourse config (`/var/discourse/containers/app.yml`)
-
-Base it on `samples/standalone.yml`. Key settings for **this** deployment:
+Based on `samples/standalone.yml`. Key settings for **this** deployment:
 
 ```yaml
-# Do NOT bind 80/443 on the host — Caddy owns them. Expose nothing to the host;
-# Caddy reaches the container over the lfi_web network by name (app:80).
+# Do NOT bind 80/443 on the host — Caddy owns them. Caddy reaches the container
+# over lfi_web by name (app:80).
 expose: []
 
-# Disable Discourse's own TLS (Caddy terminates TLS).
-#   -> remove templates/web.ssl.template.yml and templates/web.letsencrypt.ssl.template.yml
+# Disable Discourse's own TLS (Caddy terminates TLS):
+#   -> templates/web.ssl.template.yml and templates/web.letsencrypt.ssl.template.yml removed
 
 env:
   DISCOURSE_HOSTNAME: forum.landes-insoumises.fr
   DISCOURSE_DEVELOPER_EMAILS: "<ADMIN_EMAIL>"       # becomes admin; must be readable
   DISCOURSE_NOTIFICATION_EMAIL: noreply@landes-insoumises.fr
 
-  # SMTP = Mailjet (same creds as Ghost; see server ~/lfi/.env)
+  # SMTP = Mailjet (same account as Ghost; creds in the server ~/lfi/.env)
   DISCOURSE_SMTP_ADDRESS: in-v3.mailjet.com
   DISCOURSE_SMTP_PORT: 587
   DISCOURSE_SMTP_USER_NAME: "<MAILJET_API_KEY>"
@@ -126,82 +100,28 @@ env:
   DISCOURSE_SMTP_ENABLE_START_TLS: true
 ```
 
-Connecting the container to Caddy's network — after bootstrap the launcher's
-`app` container must join `lfi_web`. Preferred: add a launcher hook so it survives
-`./launcher rebuild app` (details recorded here once implemented).
+Apply changes / upgrade: `cd /var/discourse && sudo ./launcher rebuild app` (~10–15 min),
+then **re-attach the network** (see Gotchas).
 
-Bootstrap + start:
-```bash
-cd /var/discourse
-sudo ./launcher rebuild app     # ~10–15 min build
+## Caddy wiring (server-only block in `~/lfi/caddy/Caddyfile`)
+
+The repo's `caddy/Caddyfile` is the generic Ghost + Umami file; the prod copy adds one
+block (this is why `git status` on the server shows `caddy/Caddyfile` modified):
+
 ```
-
-## Phase 2 — Caddy wiring (`~/lfi/caddy/Caddyfile`)
-
-Add a site block for the forum (Caddy fetches the LE cert once DNS resolves):
-```
+# Discourse forum (out-of-band install in /var/discourse; container `app` on lfi_web).
 forum.landes-insoumises.fr {
-    reverse_proxy app:80          # 'app' = Discourse container on lfi_web
+    reverse_proxy app:80
     encode gzip zstd
+    log {
+        output stdout
+        format console
+    }
 }
 ```
-Caddy service must share the `lfi_web` network with the Discourse container.
-Reload with `docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile`.
 
-## Phase 4 — DoG (Discourse-on-Ghost)
-
-Repo: https://github.com/vikaspotluri123/discourse-on-ghost — small Node/TS service.
-**No official Docker image**, so we build one from **pinned, audited source**.
-
-**Security audit (option B).** Pinned commit **`74f3a32a12d33bb50d898f070930314faba6a650`**
-(= tag `v0.3.0`). Reviewed: no `child_process`/`exec`/`eval`/`vm`; network egress
-only to the configured Ghost/Discourse URLs; `process.env` only maps `DOG_*` config
-(no exfiltration); deps minimal + reputable (`@tryghost/*`, `express`, `node-fetch`,
-`dotenv`); no pre/postinstall scripts; standard WebCrypto HMAC-SHA256. Built with
-`git checkout <commit>` + `yarn install --frozen-lockfile`.
-
-Build: `~/lfi/dog/Dockerfile` → image `lfi-dog:v0.3.0`. Runs as a service in the
-`~/lfi` compose stack (network `web`), listening on `0.0.0.0:3286`
-(`DOG_HOSTNAME=0.0.0.0`). Caddy proxies the path prefix
-`/ghost/api/external_discourse_on_ghost/*` (on `landes-insoumises.fr`) to `dog:3286`.
-
-Routes DoG exposes under that prefix (verified in source): `sso`, `health`
-(→ `{"message":"Howdy!"}`), `hook/<webhook_id>` (POST), `admin/sync-tiers`,
-`admin/clear-caches`. **Note:** webhook path is `.../hook/<ID>`, not `.../<ID>`.
-
-`.env` keys (values only in the server `.env`, never committed):
-```
-DOG_GHOST_URL=https://landes-insoumises.fr
-DOG_GHOST_ADMIN_TOKEN=<id:secret from a Ghost custom integration>
-DOG_DISCOURSE_URL=https://forum.landes-insoumises.fr
-DOG_DISCOURSE_API_KEY=<Discourse admin API key>
-DOG_DISCOURSE_SSO_TYPE=session
-DOG_GHOST_MEMBER_DELETE_DISCOURSE_ACTION=suspend
-DOG_GHOST_MEMBER_WEBHOOKS_ENABLED=true
-DOG_DISCOURSE_SHARED_SECRET=<openssl rand -hex 32>
-DOG_GHOST_MEMBER_UPDATED_WEBHOOK_ID=<openssl rand -hex 12>
-DOG_GHOST_MEMBER_DELETED_WEBHOOK_ID=<openssl rand -hex 12>
-```
-
-## Phase 5 — SSO wiring
-
-1. Ghost Admin → Settings → Integrations → **Add custom integration** → copy Admin API Key.
-2. Discourse Admin → Settings → Login:
-   - `enable_discourse_connect` = ✅
-   - `discourse_connect_url` = `https://landes-insoumises.fr/ghost/api/external_discourse_on_ghost/sso`
-   - `discourse_connect_secret` = `DOG_DISCOURSE_SHARED_SECRET`
-   - ⚠️ **Keep an admin session open** — enabling this disables local Discourse login (everything goes through Ghost).
-3. Ghost custom integration → **Add webhook** ×2 (note the `/hook/` segment):
-   - `Member updated` → `…/ghost/api/external_discourse_on_ghost/hook/<DOG_GHOST_MEMBER_UPDATED_WEBHOOK_ID>`
-   - `Member deleted` → `…/ghost/api/external_discourse_on_ghost/hook/<DOG_GHOST_MEMBER_DELETED_WEBHOOK_ID>`
-
-## Phase 6 — Make it private
-
-- Discourse: restrict category read access to a **group** (Category → Security).
-- DoG: map Ghost tiers → Discourse groups (paid tier → group with access).
-- Optional lock-everything: Discourse `login_required` = nothing visible unless logged in (i.e. unless a Ghost member).
-
----
+Apply with `docker compose restart caddy` (not `caddy reload`, see Gotchas). Validate
+first: `docker compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile`.
 
 ## Operations
 
@@ -211,51 +131,47 @@ cd /var/discourse
 sudo ./launcher logs app           # tail logs
 sudo ./launcher enter app          # shell inside the container
 sudo ./launcher restart app        # restart
-sudo ./launcher rebuild app        # apply app.yml changes / upgrade (rebuilds container)
+sudo ./launcher rebuild app        # apply app.yml changes / upgrade (recreates the container)
 sudo ./launcher cleanup            # prune old images
 
-# Backups: Discourse Admin → Backups (or `discourse backup` inside the container).
-# Discourse data lives in /var/discourse/shared/standalone (Postgres, uploads, backups).
+# Site settings / one-off admin from the CLI (rails runner, ~30 s to boot):
+sudo docker exec app bash -lc "cd /var/www/discourse && su discourse -c 'RAILS_ENV=production bundle exec rails runner \"puts SiteSetting.login_required\"'"
+
+# Backups: Admin → Sauvegardes (or `discourse backup` inside the container).
+# Data lives in /var/discourse/shared/standalone (Postgres, uploads, backups).
 ```
 
-**Operator TODO (Ghost Admin UI — cannot be done via API)**
-Ghost blocks editing these settings through an integration Admin API key
-(every settings `PUT` returns `501 NotImplementedError`); they must be changed
-by a staff user in Ghost Admin, or (simple JSON fields only) via a direct
-`settings` table write + `docker compose restart ghost`:
-- **Members were disabled** on this blog (`members_enabled=false`,
-  `members_signup_access=none`) — the whole forum-SSO needs Ghost members. Set
-  **Settings → Membership → Access → Subscription access = "Only people I invite"**.
-- **Ghost private mode** (`is_private`, site password) redirects the whole
-  front-end to `/private/`, hiding the members portal so nobody can sign in for
-  SSO. Turn it **off** (Settings → search "private"); the forum stays private via
-  Discourse `login_required`.
-- The **"Forum" nav link** (`https://forum.landes-insoumises.fr/`) was added to
-  `settings.navigation` via a direct MySQL write + `restart ghost` (the API 501s).
+## Gotchas
 
-**Gotchas**
-- **Ghost settings are read-only over the integration Admin API** — see the
-  Operator TODO above; use the Admin UI (or DB + restart for trivial fields).
-- **Ghost Admin API auth only works via the canonical public URL** — the same
-  integration JWT gets `403 Authorization failed` on `http://ghost:2368` but 200
-  on `https://landes-insoumises.fr`. Point every API client (DoG, console) at the
-  public URL.
-- **`docker compose restart` does NOT reload `env_file` changes** — use
-  `docker compose up -d --force-recreate <svc>` after editing a service's env file.
-- **Applying Caddyfile changes:** `caddy reload` (via the admin API on `:2019`)
-  does NOT work in this setup — the admin endpoint is unreachable, so a reload
-  fails **silently** and the old config keeps running (symptom: new site gets
-  auto-HTTPS 308s but no cert is ever issued, and its requests log as JSON
-  instead of the block's console format). Apply changes with
-  `docker compose restart caddy` instead (~1-2 s blip, reads the Caddyfile fresh).
-- After every `./launcher rebuild app`, the `app` container drops off `lfi_web`
-  (rebuild recreates it). Re-run `docker network connect lfi_web app` or Caddy
-  can't reach it (502). Verify with
-  `docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' app`.
+- **After every `./launcher rebuild app`, the `app` container drops off `lfi_web`**
+  (rebuild recreates it). Re-run `docker network connect lfi_web app` or Caddy answers 502.
+  Verify with `docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' app`.
+- **Applying Caddyfile changes:** `caddy reload` (admin API on `:2019`) does NOT work in
+  this setup — the reload fails **silently** and the old config keeps running (symptom: a
+  new site block gets auto-HTTPS 308s but no cert is ever issued). Use
+  `docker compose restart caddy` (~1–2 s blip).
+- **`docker compose restart` does NOT reload `env_file`/environment changes** — use
+  `docker compose up -d --force-recreate <svc>` after editing a service's env.
+- **Ghost settings are read-only over an integration Admin API key** (every settings `PUT`
+  returns `501`): change them in Ghost Admin, or (simple JSON fields) via a direct
+  `settings` table write + `docker compose restart ghost`. The "Forum" nav link was added
+  that way (`settings.navigation`).
+- **Ghost Admin API auth only works via the canonical public URL** (`https://landes-insoumises.fr`),
+  not `http://ghost:2368` (403).
 - SMTP sender must stay `@landes-insoumises.fr` (SPF/DKIM authenticated for Mailjet).
-- DiscourseConnect is free on self-hosted Discourse (no paid plan needed).
+- Discourse requires swap: 2 GB `/swapfile` is persisted in `/etc/fstab`.
+- OVH DNS: when adding a record, OVH leaves its parking `A 213.186.33.5` in place — it must
+  be *deleted*, not just supplemented (bit us during the domain migration of 2026-07-31).
+
+## Install log (condensed)
+
+- 2026-07 — swap, DNS `A forum → 37.59.103.153`, `discourse_docker` cloned to `/var/discourse`,
+  `app.yml` (Mailjet SMTP, locale fr, `expose: []`, no Discourse TLS), bootstrapped; `app`
+  joined to `lfi_web`; Caddy forum block; LE cert issued; admin account activated by e-mail.
+- 2026-07 → 2026-08 — Ghost SSO era (DoG + tier gate + team console). Domain migration
+  `lol-reminder.fr → landes-insoumises.fr` on 2026-07-31 (`DISCOURSE_HOSTNAME` + rebuild).
+- **2026-09-05 — SSO removed, forum standalone** (see History above).
 
 ## Sources
-- DoG: https://github.com/vikaspotluri123/discourse-on-ghost
-- LinuxHandbook — Ghost SSO + Discourse: https://linuxhandbook.com/ghost-sso-discourse/
-- Discourse Meta — Introducing Discourse on Ghost: https://meta.discourse.org/t/257108
+- Discourse install: https://github.com/discourse/discourse_docker
+- Discourse invites: https://meta.discourse.org/t/how-to-invite-users-to-a-private-site

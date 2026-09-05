@@ -8,7 +8,7 @@
 ## Pourquoi n8n
 
 - Équivalent open-source de Make/Zapier, auto-hébergeable dans le stack
-  `~/lfi` existant (comme Umami/DoG) — pas d'abonnement.
+  `~/lfi` existant (comme Umami) — pas d'abonnement.
 - Ghost n'a rien de natif pour FB/Insta ; il expose un webhook
   `post.published`, l'Admin/Content API et un flux RSS — n8n s'y branche.
 - Alternatives écartées : Zapier/Make/Metricool/Publer (abonnements),
