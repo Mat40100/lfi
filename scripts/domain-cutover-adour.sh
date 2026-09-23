@@ -43,10 +43,10 @@ on_exit() {
 }
 trap on_exit EXIT
 
-a_rec() {  # first A record of $1, public resolver first (avoid stale local cache)
+a_rec() {  # ALL A records of $1 (space separated), public resolver first (avoid stale local cache)
   local r
-  r=$(dig +short A "$1" @1.1.1.1 2>/dev/null | grep -E '^[0-9.]+$' | tail -n1 || true)
-  [[ -n $r ]] || r=$(dig +short A "$1" 2>/dev/null | grep -E '^[0-9.]+$' | tail -n1 || true)
+  r=$(dig +short A "$1" @1.1.1.1 2>/dev/null | grep -E '^[0-9.]+$' | sort | tr '\n' ' ' | sed 's/ $//' || true)
+  [[ -n $r ]] || r=$(dig +short A "$1" 2>/dev/null | grep -E '^[0-9.]+$' | sort | tr '\n' ' ' | sed 's/ $//' || true)
   echo "$r"
 }
 txt_rec() { dig +short TXT "$1" @1.1.1.1 2>/dev/null | tr -d '"' || true; }
@@ -71,9 +71,9 @@ echo "DNS (must all point at $IP):"
 DNS_FAIL=0
 for h in "$NEW" "www.$NEW" "forum.$NEW"; do
   r=$(a_rec "$h"); printf '  %-32s -> %s\n' "$h" "${r:-<none>}"
-  [[ $r == "$IP" ]] || DNS_FAIL=1
+  [[ $r == "$IP" ]] || DNS_FAIL=1   # exactly one A record, ours — a leftover parking A breaks the ACME challenge
 done
-[[ $DNS_FAIL == 0 ]] || die "apex, www and forum of $NEW must resolve to $IP first (Let's Encrypt validates them). OVH zone: add the A records AND delete the parking A 213.186.33.5."
+[[ $DNS_FAIL == 0 ]] || die "apex, www and forum of $NEW must each resolve to exactly $IP (Let's Encrypt validates them). OVH zone: add the A records AND delete the parking A 213.186.33.5 on every name."
 echo "Old names (kept as 301 redirects while they still point here):"
 for h in "$OLD" "www.$OLD" "forum.$OLD"; do printf '  %-32s -> %s\n' "$h" "$(a_rec "$h")"; done
 
