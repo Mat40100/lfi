@@ -10,9 +10,15 @@ and reverse-proxied by [Caddy](https://caddyserver.com/) (not nginx).
 | `ghost` | custom (`./ghost/Dockerfile`, extends `ghost:6-alpine`) | The publishing app |
 | `mysql` | `mysql:8.0`                 | Database                               |
 | `caddy` | `caddy:2-alpine`            | Reverse proxy + automatic HTTPS        |
+| `tinybird-local` | custom (`./tinybird-local`, from `tinybirdco/tinybird-local`) | Self-hosted Tinybird: store + API behind Ghost's native **Analytics** screens |
+| `tinybird-deploy` | custom (`./tinybird`, `tb` CLI + Ghost's Tinybird project) | One-shot: deploys Ghost's datasources/pipes into `tinybird-local`, prints tokens |
+| `traffic-analytics` | `ghost/traffic-analytics` | Ghost's page-hit proxy (bot filtering, privacy-preserving signatures) |
 
 Data persists in local bind-mounted folders under `./data/`
-(`data/ghost-content`, `data/mysql`, `data/caddy/data`, `data/caddy/config`).
+(`data/ghost-content`, `data/mysql`, `data/caddy/data`, `data/caddy/config`,
+`data/tinybird/{clickhouse,redis}`, `data/traffic-analytics`).
+
+Web analytics are fully self-hosted: see [`docs/analytics-tinybird.md`](docs/analytics-tinybird.md).
 
 ## Quick start
 
@@ -21,8 +27,9 @@ Data persists in local bind-mounted folders under `./data/`
 cp .env.example .env
 # edit .env and set MYSQL_ROOT_PASSWORD / MYSQL_PASSWORD
 
-# 2. Build & start
-make dev          # or: docker compose up -d --build
+# 2. Build & start (also bootstraps analytics: deploys Ghost's Tinybird pipes and
+#    writes the TINYBIRD_* tokens into .env — see docs/analytics-tinybird.md)
+make dev          # or: docker compose up -d --build && ./scripts/analytics-init.sh
 
 # 3. Open the site / admin
 #    http://localhost/         -> the blog
@@ -69,7 +76,10 @@ up too (e.g. `tar czf ghost_content.tgz -C data/ghost-content .`).
 ## Updating
 
 ```bash
-docker compose pull          # newer mysql / caddy
-docker compose build --pull  # newer Ghost base image
+docker compose pull          # newer mysql / caddy / traffic-analytics
+docker compose build --pull  # newer Ghost base image (+ its Tinybird pipes, re-deployed on `up`)
 docker compose up -d
 ```
+
+Memory: `tinybird-local` needs ~1.6 GB idle (hard cap `TINYBIRD_MEMORY_LIMIT`,
+default 4g). Budget ≥ 4 GB of RAM for the whole stack.

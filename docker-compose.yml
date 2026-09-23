@@ -1,10 +1,21 @@
-# Self-hosted Ghost stack: Ghost + MySQL 8 + Caddy reverse proxy.
+# Self-hosted Ghost stack: Ghost + MySQL 8 + Caddy reverse proxy + self-hosted
+# web analytics (Tinybird Local + Ghost's traffic-analytics proxy).
 #
-#   ghost  -> the publishing app (custom image in ./ghost)
-#   mysql  -> database (official MySQL 8)
-#   caddy  -> reverse proxy / TLS terminator (official Caddy)
+#   ghost             -> the publishing app (custom image in ./ghost)
+#   mysql             -> database (official MySQL 8)
+#   caddy             -> reverse proxy / TLS terminator (official Caddy)
+#   tinybird-local    -> Tinybird Local: ClickHouse-backed analytics store + API that
+#                        Ghost 6's native "Analytics" screens query (no Tinybird Cloud)
+#   tinybird-deploy   -> one-shot: deploys Ghost's Tinybird project (datasources/pipes,
+#                        shipped inside the Ghost image) into tinybird-local; also
+#                        prints the tokens (`tokens` sub-command, see scripts/analytics-init.sh)
+#   traffic-analytics -> Ghost's official page-hit proxy: browser -> Caddy
+#                        (/.ghost/analytics/*) -> here (bot filter, UA parsing, salted
+#                        user signature) -> tinybird-local /v0/events
 #
 # Copy .env.example to .env and set passwords before `docker compose up -d`.
+# First analytics boot: `make analytics-init` (or `make dev` / `make prod`, which run it)
+# writes TINYBIRD_* tokens into .env and recreates ghost + traffic-analytics.
 
 services:
   ghost:
@@ -28,25 +39,24 @@ services:
       # No mail transport is configured yet; without this, admin login tries to
       # email a device-verification code and fails with a 500.
       security__staffDeviceVerification: "false"
+      # --- Web analytics (Tinybird) ---------------------------------------
+      # workspaceId + adminToken let Ghost sign short-lived JWTs (read-only pipe
+      # scopes) for the Analytics screens. Empty until `make analytics-init` has
+      # written them into .env — Ghost then simply hides web analytics.
+      tinybird__workspaceId: ${TINYBIRD_WORKSPACE_ID:-}
+      tinybird__adminToken: ${TINYBIRD_ADMIN_TOKEN:-}
+      # Where the browser tracker (ghost-stats.js) POSTs page hits: our own
+      # origin, routed by Caddy to traffic-analytics.
+      tinybird__tracker__endpoint: ${GHOST_URL:-http://localhost}/.ghost/analytics/api/v1/page_hit
+      tinybird__tracker__datasource: analytics_events
+      # Where Ghost (server side, e.g. "Top content") AND Ghost Admin (browser)
+      # query Tinybird pipes. Deliberately our public origin, not
+      # http://tinybird-local:7181: in production Ghost's outbound HTTP client
+      # refuses single-label hosts / private IPs (SSRF guard) unless the host is
+      # the site's own host. Caddy only forwards /v0/pipes/* on this path.
+      tinybird__stats__endpoint: ${GHOST_URL:-http://localhost}/.ghost/tinybird
     volumes:
       - ./data/ghost-content:/var/lib/ghost/content
-    networks:
-      - web
-      - internal
-
-  umami:
-    image: ghcr.io/umami-software/umami:mysql-v2.16
-    restart: unless-stopped
-    depends_on:
-      mysql:
-        condition: service_healthy
-    environment:
-      DATABASE_TYPE: mysql
-      # Dedicated `umami` database in the shared MySQL instance (created once
-      # by hand; persists in ./data/mysql like the ghost database).
-      DATABASE_URL: mysql://umami:${UMAMI_DB_PASSWORD:?set UMAMI_DB_PASSWORD in .env}@mysql:3306/umami
-      APP_SECRET: ${UMAMI_APP_SECRET:?set UMAMI_APP_SECRET in .env}
-      DISABLE_TELEMETRY: "1"
     networks:
       - web
       - internal
@@ -81,8 +91,6 @@ services:
     ports:
       - "80:80"
       - "443:443"
-      # Umami analytics dashboard + tracker (second site block in the Caddyfile).
-      - "8080:8080"
     environment:
       # Site address for the Caddyfile: ":80" locally, your domain in prod.
       CADDY_SITE_ADDRESS: ${CADDY_SITE_ADDRESS:-:80}
@@ -92,7 +100,104 @@ services:
       - ./data/caddy/config:/config
     networks:
       - web
+      - analytics
+
+  # Tinybird Local (https://www.tinybird.co/docs/forward/install-tinybird/local):
+  # ClickHouse + Redis + the Tinybird API in one container, port 7181.
+  # Never published on the host — Caddy exposes only /v0/pipes/* (read-only,
+  # token-protected) under /.ghost/tinybird/, and traffic-analytics ingests
+  # into /v0/events from inside the `analytics` network.
+  tinybird-local:
+    # Thin derivative of tinybirdco/tinybird-local (ClickHouse memory budget +
+    # unused side services removed) — see tinybird-local/Dockerfile. The base
+    # digest there is the one Ghost pins for its analytics CI, paired with the
+    # tb CLI 4.6.13 in ./tinybird; bump both together (docs/analytics-tinybird.md).
+    build:
+      context: ./tinybird-local
+    image: lfi-tinybird-local:latest
+    restart: unless-stopped
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          # Hard cap so a runaway can only OOM this container, never Ghost/MySQL.
+          # Idle footprint is ~2-2.5 GB on a 4-vCPU box (Tinybird spawns one CSV
+          # worker per ~3 CPUs, ~450 MB each) + ClickHouse capped at 1.5 GiB.
+          memory: ${TINYBIRD_MEMORY_LIMIT:-4g}
+    environment:
+      # Tinybird sizes its pools from os.cpu_count() — e.g. one ~450 MB CSV
+      # worker per 2 CPUs. Python 3.13 honours this override, so pretend we
+      # have 2 CPUs: one worker, ~1 GB less RSS on a 4-vCPU box. Raise it if you
+      # ever bulk-import CSVs into Tinybird (Ghost never does).
+      PYTHON_CPU_COUNT: ${TINYBIRD_CPU_COUNT:-2}
+    volumes:
+      - ./data/tinybird/clickhouse:/var/lib/clickhouse
+      - ./data/tinybird/redis:/redis-data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:7181/v0/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      # Cold start (fresh volumes) takes ~30-60s; a big ClickHouse restart longer.
+      start_period: 180s
+      start_interval: 2s
+    networks:
+      - analytics
+
+  # One-shot. Runs on every `docker compose up` (idempotent `tb deploy`: no-op when
+  # the pipes already match) so a Ghost upgrade that ships new pipes gets them
+  # deployed by the usual `docker compose build --pull && docker compose up -d`.
+  # Ghost does NOT depend on it: analytics must never block the site.
+  tinybird-deploy:
+    build:
+      context: ./tinybird
+    image: lfi-tinybird-deploy:latest
+    restart: "no"
+    depends_on:
+      tinybird-local:
+        condition: service_healthy
+    environment:
+      # `tb --local ...` talks to this host (fetches the workspace admin token from
+      # its unauthenticated /tokens endpoint — that is why 7181 stays internal).
+      TB_HOST: http://tinybird-local:7181
+      TB_LOCAL_HOST: tinybird-local
+      # The CLI is pinned on purpose (see tinybird/Dockerfile); don't nag about updates.
+      TB_VERSION_WARNING: "0"
+    networks:
+      - analytics
+
+  # Ghost's official analytics proxy (https://github.com/TryGhost/TrafficAnalytics).
+  # Receives POST /api/v1/page_hit from browsers (via Caddy), drops bots, parses
+  # UA/referrer, adds a privacy-preserving daily-salted user signature, then
+  # appends the event to Tinybird's analytics_events datasource with the
+  # tracker token (APPEND-only) — the token never reaches the browser.
+  traffic-analytics:
+    # Pinned to the version ghost-docker (TryGhost) ships.
+    image: ghost/traffic-analytics:1.0.429@sha256:0da1b7729e0551e52c43d1f5ee67f6af8820f219c96dd5af36d1a3642b1e1543
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PROXY_TARGET: http://tinybird-local:7181/v0/events
+      TINYBIRD_TRACKER_TOKEN: ${TINYBIRD_TRACKER_TOKEN:-}
+      # Daily-rotating salts for the user signature, persisted across restarts.
+      SALT_STORE_TYPE: file
+      SALT_STORE_FILE_PATH: /data/salts.json
+      LOG_LEVEL: ${TRAFFIC_ANALYTICS_LOG_LEVEL:-info}
+    volumes:
+      - ./data/traffic-analytics:/data
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3000').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    networks:
+      - analytics
 
 networks:
+  # caddy <-> ghost
   web:
+  # ghost <-> mysql (never reachable from caddy or the host)
   internal:
+  # caddy <-> traffic-analytics / tinybird-local, traffic-analytics + tinybird-deploy <-> tinybird-local
+  analytics:

@@ -1,0 +1,15 @@
+<!-- Loaded automatically from /etc/clickhouse-server/config.d/ (see ../Dockerfile). -->
+<clickhouse>
+    <!-- Explicit own-process budget (1.5 GiB) instead of 90% of the cgroup. -->
+    <max_server_memory_usage>1610612736</max_server_memory_usage>
+    <!-- Track ClickHouse's own RSS, not the cgroup's usage (which includes
+         Tinybird's Python workers, ~2 GB): otherwise "Memory limit (total)
+         exceeded" fires at idle. memory_worker_* is the 24.9+ mechanism,
+         cgroups_memory_usage_observer_* the older one; set both. -->
+    <memory_worker_use_cgroup>false</memory_worker_use_cgroup>
+    <cgroups_memory_usage_observer_wait_time>0</cgroups_memory_usage_observer_wait_time>
+    <!-- Upstream: 5 GiB / 8 GiB. A blog's analytics tables are tiny. -->
+    <mark_cache_size>268435456</mark_cache_size>
+    <uncompressed_cache_size>268435456</uncompressed_cache_size>
+    <max_concurrent_queries>32</max_concurrent_queries>
+</clickhouse>

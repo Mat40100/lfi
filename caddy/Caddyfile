@@ -1,4 +1,4 @@
-# Caddy reverse proxy for Ghost.
+# Caddy reverse proxy for Ghost (+ Ghost's self-hosted web analytics).
 #
 # The site address comes from CADDY_SITE_ADDRESS (set in .env, passed through
 # docker-compose.yml):
@@ -6,6 +6,27 @@
 #   - production: your domain, e.g. "blog.example.com" — Caddy automatically
 #     obtains & renews a Let's Encrypt certificate (ports 80/443 must be open).
 {$CADDY_SITE_ADDRESS::80} {
+	# --- Web analytics (Tinybird) -------------------------------------------
+	# Page hits: Ghost's ghost-stats.js POSTs to <site>/.ghost/analytics/api/v1/page_hit
+	# (tinybird.tracker.endpoint). The prefix is stripped, so traffic-analytics
+	# receives POST /api/v1/page_hit and forwards the enriched event to Tinybird.
+	handle_path /.ghost/analytics/* {
+		reverse_proxy traffic-analytics:3000
+	}
+
+	# Stats queries: Ghost Admin (browser, JWT from Ghost) and Ghost itself
+	# (server side) read Tinybird pipes at <site>/.ghost/tinybird/v0/pipes/<pipe>.json
+	# (tinybird.stats.endpoint). Only the read-only pipes API is forwarded —
+	# Tinybird's token, SQL and ingestion endpoints are never reachable from outside.
+	handle /.ghost/tinybird/v0/pipes/* {
+		uri strip_prefix /.ghost/tinybird
+		reverse_proxy tinybird-local:7181
+	}
+	handle /.ghost/tinybird/* {
+		respond 403
+	}
+
+	# --- Ghost (everything else) --------------------------------------------
 	reverse_proxy ghost:2368 {
 		# Ghost takes ~10-15s to migrate the DB and open its port on a fresh
 		# start. Retry instead of returning 502/503 to clients during boot.
@@ -19,24 +40,6 @@
 		# the upstream Set-Cookie to SameSite=Lax (correct for this same-site
 		# login flow). Remove once the site is served over HTTPS.
 		header_down Set-Cookie "(?i)samesite=none" "SameSite=Lax"
-	}
-
-	encode gzip zstd
-
-	log {
-		output stdout
-		format console
-	}
-}
-
-# Umami analytics (dashboard + tracking script) on a separate port.
-# Once a domain exists, replace with a subdomain site block instead,
-# e.g. "stats.example.com { reverse_proxy umami:3000 }".
-:8080 {
-	reverse_proxy umami:3000 {
-		# Umami needs a few seconds to run DB migrations on first boot.
-		lb_try_duration 30s
-		lb_try_interval 1s
 	}
 
 	encode gzip zstd
