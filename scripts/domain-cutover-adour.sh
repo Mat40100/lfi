@@ -14,7 +14,8 @@
 #   4. Ghost DB              "Forum" nav link (+ members_support_address if mail kept old)
 #   5. docker compose up -d --force-recreate ghost caddy   (~15 s blip)
 #   6. /var/discourse/containers/app.yml  DISCOURSE_HOSTNAME (+ notification e-mail)
-#      -> ./launcher rebuild app  (forum DOWN ~10-15 min), re-attach lfi_web,
+#      -> ./launcher rebuild app  (forum DOWN ~10-15 min; re-run the script if the launcher
+#         stops after a Postgres upgrade and asks for a second rebuild), re-attach lfi_web,
 #         remap old->new host in posts (same as rake posts:remap), vapid_base_url
 #   7. verification (HTTP codes) + summary
 set -euo pipefail
@@ -162,8 +163,12 @@ log "Ghost DB: navigation link / support address"
 } | mysql_ghost
 
 # ---------------------------------------------------------------- Ghost + Caddy
-log "Recreate ghost + caddy"
-(cd "$LFI" && docker compose up -d --force-recreate ghost caddy)
+if cmp -s "$LFI/.env" "$BK/.env" && cmp -s "$CF" "$BK/Caddyfile"; then
+  log "ghost + caddy: .env and Caddyfile unchanged — nothing to recreate"
+else
+  log "Recreate ghost + caddy"
+  (cd "$LFI" && docker compose up -d --force-recreate ghost caddy)
+fi
 STAGE=applied
 s=none
 for _ in $(seq 1 60); do
@@ -190,11 +195,15 @@ fi
 sudo grep -nE 'DISCOURSE_HOSTNAME|DISCOURSE_NOTIFICATION_EMAIL' "$APP_YML" | sed 's/^/  /'
 sudo grep -q "DISCOURSE_HOSTNAME: \"forum.$NEW\"" "$APP_YML" || die "app.yml edit failed"
 
-if sudo cmp -s "$APP_YML" "$BK/app.yml"; then
-  echo "  app.yml unchanged — skipping rebuild"
+app_running() { [[ -n $(docker ps -q --filter name='^app$' --filter status=running) ]]; }
+if sudo cmp -s "$APP_YML" "$BK/app.yml" && app_running; then
+  echo "  app.yml unchanged and forum container running — skipping rebuild"
 else
+  app_running || warn "forum container 'app' is not running — rebuilding (a launcher Postgres upgrade stops after the first rebuild and asks for a second one)"
   log "Discourse: launcher rebuild app (forum down ~10-15 min, do not interrupt)"
-  (cd "$DISCOURSE_DIR" && sudo ./launcher rebuild app)
+  (cd "$DISCOURSE_DIR" && sudo ./launcher rebuild app) || warn "launcher exited non-zero — checking whether the container came up anyway"
+  sleep 5
+  app_running || die "forum container 'app' still not running after rebuild — read the output above (a Postgres upgrade message means: run this script again) or: cd /var/discourse && sudo ./launcher logs app"
   sudo docker network connect lfi_web app 2>/dev/null || true
   docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' app | grep -q lfi_web || die "container app is not on lfi_web"
   echo "  app networks: $(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' app)"
