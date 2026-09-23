@@ -129,7 +129,8 @@ grep -q "^GHOST_URL=https://$NEW\$" "$LFI/.env" || die ".env edit failed"
 
 # ---------------------------------------------------------------- Caddyfile
 log "Update Caddyfile"
-sed -i "s|^forum\.$OLD {|forum.$NEW {|" "$CF"
+# rename the forum reverse_proxy block once; on re-runs the old name only remains as a redirect block
+if ! grep -q "^forum\.$NEW {" "$CF"; then sed -i "s|^forum\.$OLD {|forum.$NEW {|" "$CF"; fi
 grep -q "^forum\.$NEW {" "$CF" || die "forum block rename failed"
 if ! grep -q "^$OLD, www\.$OLD {" "$CF"; then
   cat >> "$CF" <<EOF
