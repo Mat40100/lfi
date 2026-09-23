@@ -199,6 +199,19 @@ echo "  Caddyfile valid"
 # ---------------------------------------------------------------- 4. services
 log "building tinybird-local + tinybird-deploy (pulls the ~2 GB Tinybird base once)"
 docker compose build tinybird-local tinybird-deploy
+
+# A Tinybird Local that never completed its bootstrap (no tokens in .env yet) holds
+# no data worth keeping. If a previous attempt left it half-initialised (e.g. the
+# 2026-09-23 max_concurrent_queries incident), start it from clean volumes.
+if ! grep -qE '^TINYBIRD_ADMIN_TOKEN=.+' .env && docker inspect lfi-tinybird-local-1 >/dev/null 2>&1; then
+  st=$(docker inspect lfi-tinybird-local-1 --format '{{.State.Health.Status}}' 2>/dev/null || echo none)
+  if [[ $st != healthy ]]; then
+    warn "tinybird-local is '$st' and analytics were never bootstrapped — resetting its volumes for a clean first boot"
+    docker compose rm -sf tinybird-local tinybird-deploy >/dev/null
+    sudo -n rm -rf data/tinybird/clickhouse data/tinybird/redis \
+      || die "need passwordless sudo to reset data/tinybird (root-owned)"
+  fi
+fi
 log "starting analytics services + bootstrapping tokens (recreates ghost + traffic-analytics)"
 docker compose up -d tinybird-local traffic-analytics
 ./scripts/analytics-init.sh

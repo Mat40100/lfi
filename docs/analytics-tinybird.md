@@ -70,6 +70,12 @@ analytics* is on (it is by default).
   `PYTHON_CPU_COUNT=2` (→ 1 CSV worker; Python 3.13 honours it), Kafka + MCP
   programs removed from supervisord. Result: ~1.6 GB idle under a 4 GB cap
   (`TINYBIRD_MEMORY_LIMIT`).
+- **Don't lower ClickHouse's `max_concurrent_queries`** (upstream 100). Tinybird's
+  first boot creates ~40 internal tables with concurrent `CREATE TABLE ON
+  CLUSTER`; on the 4-vCPU prod box a limit of 32 made ClickHouse reject some
+  ("processing too many queries"), the internal workspace never initialised and
+  the API never listened on 8001 (nginx 502 on `/v0/health` forever). A first
+  boot there takes minutes, hence the 600 s healthcheck grace period.
 - `tb deploy` prints `Deployment failed` / `[Error] …` but may still exit 0,
   and exits non-zero for the harmless "No changes to be deployed" — the
   entrypoint decides on the text, not the exit code.

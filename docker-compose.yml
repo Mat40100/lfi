@@ -138,9 +138,12 @@ services:
       interval: 30s
       timeout: 5s
       retries: 5
-      # Cold start (fresh volumes) takes ~30-60s; a big ClickHouse restart longer.
-      start_period: 180s
-      start_interval: 2s
+      # First boot creates ~40 internal ClickHouse tables: ~20s on a fast
+      # workstation, minutes on a small shared-CPU VPS. Probe every 5s during a
+      # generous grace period so `depends_on: service_healthy` neither flaps
+      # nor gives up early.
+      start_period: 600s
+      start_interval: 5s
     networks:
       - analytics
 

@@ -11,5 +11,8 @@
     <!-- Upstream: 5 GiB / 8 GiB. A blog's analytics tables are tiny. -->
     <mark_cache_size>268435456</mark_cache_size>
     <uncompressed_cache_size>268435456</uncompressed_cache_size>
-    <max_concurrent_queries>32</max_concurrent_queries>
+    <!-- Do NOT lower max_concurrent_queries (upstream: 100): Tinybird's first boot
+         runs dozens of concurrent CREATE TABLE ON CLUSTER for its internal
+         datasources; on a slow box a lower limit makes ClickHouse reject some
+         ("processing too many queries") and the API never starts listening. -->
 </clickhouse>
