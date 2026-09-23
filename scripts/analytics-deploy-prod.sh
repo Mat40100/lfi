@@ -29,7 +29,7 @@ SITE_URL=https://adour-en-commun.fr
 log()  { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33mWARN: %s\033[0m\n' "$*"; }
 die()  { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
-http_code() { curl -s -o /dev/null -m 20 -w '%{http_code}' "$@" 2>/dev/null || echo 000; }
+http_code() { curl -s -o /dev/null -m 20 -w '%{http_code}' "$@" 2>/dev/null || true; }   # curl prints 000 itself on connect failure
 mysql_root() {  # SQL on stdin, executed as root with the password from the container env
   (cd "$LFI" && docker compose exec -T mysql sh -c 'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD" --default-character-set=utf8mb4 "$@"' -- "$@")
 }
@@ -209,7 +209,9 @@ docker compose up -d caddy
 log "verification"
 for i in $(seq 1 30); do [[ $(http_code "$SITE_URL/") == 200 ]] && break; sleep 2; done
 ok=1
-check() { local code; code=$(http_code "${@:2}"); printf '  %-58s %s\n' "$1" "$code"; [[ $code =~ $2 ]] || ok=0; }
+check() {  # check <label> <accepted-codes-regex> <curl args...>
+  local code; code=$(http_code "${@:3}"); printf '  %-58s %s\n' "$1" "$code"; [[ $code =~ $2 ]] || ok=0
+}
 check "GET  $SITE_URL/" '^200$' "$SITE_URL/"
 if curl -s -m 20 "$SITE_URL/" | grep -q 'ghost-stats.min.js'; then
   echo "  tracker script present in HTML                              yes"
