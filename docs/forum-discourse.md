@@ -1,6 +1,6 @@
 # Forum — Discourse (standalone)
 
-> **Living runbook** for the private team forum at `https://forum.landes-insoumises.fr`.
+> **Living runbook** for the private team forum at `https://forum.adour-en-commun.fr`.
 >
 > ⚠️ **This install lives OUTSIDE this repo's `docker-compose.yml`.** Discourse's only
 > officially supported install is its own `discourse_docker` launcher in `/var/discourse`
@@ -35,23 +35,23 @@ grants nothing on the forum; the "Forum" link in Ghost's navigation is just a li
 | | |
 |---|---|
 | Server | `37.59.103.153` (OVH, Ubuntu) — `ssh ubuntu@37.59.103.153 -i ~/.ssh/id_lfi` |
-| Forum | `https://forum.landes-insoumises.fr` (Discourse, behind Caddy) |
+| Forum | `https://forum.adour-en-commun.fr` (Discourse, behind Caddy) |
 | Discourse install | `/var/discourse` (launcher), container name `app` |
 | Data | `/var/discourse/shared/standalone` (Postgres, uploads, backups) |
 | Compose network shared with Caddy | `lfi_web` |
-| Email | Mailjet SMTP (`in-v3.mailjet.com`), sender `noreply@landes-insoumises.fr` |
+| Email | Mailjet SMTP (`in-v3.mailjet.com`), sender `noreply@adour-en-commun.fr` |
 | Admins | `mathieu.d`, `Jean-Robert_DASSE` |
 
 ## Architecture
 
 ```
-Browser → forum.landes-insoumises.fr ──(Caddy, TLS)──► Discourse `app`:80 (Postgres+Redis internal)
+Browser → forum.adour-en-commun.fr ──(Caddy, TLS)──► Discourse `app`:80 (Postgres+Redis internal)
                                                         accounts, login, invites: Discourse itself
-Browser → landes-insoumises.fr        ──(Caddy, TLS)──► Ghost  (no relation to forum accounts)
+Browser → adour-en-commun.fr        ──(Caddy, TLS)──► Ghost  (no relation to forum accounts)
 ```
 
 Caddy (the compose service) is the single TLS terminator for **all** hostnames:
-`landes-insoumises.fr` (Ghost), `forum.landes-insoumises.fr` (Discourse), `:8080` (Umami).
+`adour-en-commun.fr` (Ghost), `forum.adour-en-commun.fr` (Discourse), `:8080` (Umami).
 Discourse does **not** manage its own certs (its Let's Encrypt templates are disabled) and
 does **not** publish 80/443 (`expose: []` — Caddy owns them). Caddy reaches the `app`
 container by name over `lfi_web`.
@@ -69,8 +69,8 @@ Discourse site settings (all set, verified 2026-09-05):
 | `force_https` | `true` | |
 
 **Users created during the SSO era have no password.** They use « Mot de passe oublié »
-(or the e-mail-link login) once on `https://forum.landes-insoumises.fr/login`; the mail
-arrives from `noreply@landes-insoumises.fr`.
+(or the e-mail-link login) once on `https://forum.adour-en-commun.fr/login`; the mail
+arrives from `noreply@adour-en-commun.fr`.
 
 Category visibility: all categories are public *inside* the forum (no group restriction).
 Restrict a category to a group via Category → Sécurité if needed.
@@ -88,9 +88,9 @@ expose: []
 #   -> templates/web.ssl.template.yml and templates/web.letsencrypt.ssl.template.yml removed
 
 env:
-  DISCOURSE_HOSTNAME: forum.landes-insoumises.fr
+  DISCOURSE_HOSTNAME: forum.adour-en-commun.fr
   DISCOURSE_DEVELOPER_EMAILS: "<ADMIN_EMAIL>"       # becomes admin; must be readable
-  DISCOURSE_NOTIFICATION_EMAIL: noreply@landes-insoumises.fr
+  DISCOURSE_NOTIFICATION_EMAIL: noreply@adour-en-commun.fr
 
   # SMTP = Mailjet (same account as Ghost; creds in the server ~/lfi/.env)
   DISCOURSE_SMTP_ADDRESS: in-v3.mailjet.com
@@ -110,7 +110,7 @@ block (this is why `git status` on the server shows `caddy/Caddyfile` modified):
 
 ```
 # Discourse forum (out-of-band install in /var/discourse; container `app` on lfi_web).
-forum.landes-insoumises.fr {
+forum.adour-en-commun.fr {
     reverse_proxy app:80
     encode gzip zstd
     log {
@@ -156,9 +156,9 @@ sudo docker exec app bash -lc "cd /var/www/discourse && su discourse -c 'RAILS_E
   returns `501`): change them in Ghost Admin, or (simple JSON fields) via a direct
   `settings` table write + `docker compose restart ghost`. The "Forum" nav link was added
   that way (`settings.navigation`).
-- **Ghost Admin API auth only works via the canonical public URL** (`https://landes-insoumises.fr`),
+- **Ghost Admin API auth only works via the canonical public URL** (`https://adour-en-commun.fr`),
   not `http://ghost:2368` (403).
-- SMTP sender must stay `@landes-insoumises.fr` (SPF/DKIM authenticated for Mailjet).
+- SMTP sender must stay `@adour-en-commun.fr` (SPF/DKIM authenticated for Mailjet).
 - Discourse requires swap: 2 GB `/swapfile` is persisted in `/etc/fstab`.
 - OVH DNS: when adding a record, OVH leaves its parking `A 213.186.33.5` in place — it must
   be *deleted*, not just supplemented (bit us during the domain migration of 2026-07-31).
@@ -171,6 +171,37 @@ sudo docker exec app bash -lc "cd /var/www/discourse && su discourse -c 'RAILS_E
 - 2026-07 → 2026-08 — Ghost SSO era (DoG + tier gate + team console). Domain migration
   `lol-reminder.fr → landes-insoumises.fr` on 2026-07-31 (`DISCOURSE_HOSTNAME` + rebuild).
 - **2026-09-05 — SSO removed, forum standalone** (see History above).
+- **2026-09 — domain migration `landes-insoumises.fr → adour-en-commun.fr`** — prepared 2026-09-23, **not run yet** (domain unregistered); see below. Update this line with the cutover date.
+
+## Domain migration `landes-insoumises.fr → adour-en-commun.fr` (2026-09)
+
+Everything is done by **`scripts/domain-cutover-adour.sh`** (repo) = `~/domain-cutover-adour.sh`
+(server), run as `ubuntu`: `bash ~/domain-cutover-adour.sh` (`YES=1` skips the prompt). It is
+guarded and idempotent — re-running it only redoes what still differs.
+
+**Prerequisites (operator, before running):**
+1. Register `adour-en-commun.fr` (it did not exist on 2026-09-23) and, in the OVH zone, add
+   `A @`, `A www`, `A forum` → `37.59.103.153`. **Delete OVH's parking `A 213.186.33.5`**
+   (same trap as 2026-07-31). The script refuses to run until all three resolve.
+2. Mailjet → Senders & domains → add `adour-en-commun.fr`, put its SPF (`include:spf.mailjet.com`)
+   and DKIM (`mailjet._domainkey`) TXT records in the zone, validate. Ghost sends member
+   magic-links as `noreply@<site host>` and Discourse as `DISCOURSE_NOTIFICATION_EMAIL`, so an
+   unvalidated sender domain = bounced logins. Without it, run with `SKIP_MAIL_CHECK=1`: the
+   script then keeps `noreply@landes-insoumises.fr` (`MAIL_FROM`, `members_support_address`,
+   `DISCOURSE_NOTIFICATION_EMAIL`) and you re-run it once Mailjet is validated.
+
+**What the script changes** (backups in `~/domain-cutover-backup-<ts>/`):
+- `~/lfi/.env`: `GHOST_URL`, `CADDY_SITE_ADDRESS`, `MAIL_FROM` → `docker compose up -d --force-recreate ghost caddy`.
+- `~/lfi/caddy/Caddyfile`: forum block → `forum.adour-en-commun.fr`; new blocks 301-redirecting
+  `landes-insoumises.fr`, `www.`, `forum.` to the new names (validated in a throwaway container first).
+- Ghost DB: `settings.navigation` "Forum" link (the only hard-coded old URL — posts/images use
+  `__GHOST_URL__`). `mailgun_domain` is left on `landes-insoumises.fr` (operator: verify a new
+  Mailgun domain first, then change it in Ghost Admin → Email newsletter).
+- Discourse: `DISCOURSE_HOSTNAME` (+ notification e-mail) in `app.yml` → `./launcher rebuild app`
+  (**forum down ~10–15 min**), `docker network connect lfi_web app`, then `rake posts:remap`
+  for the 7 posts that link to the old host and `SiteSetting.vapid_base_url`. Users must log in
+  again (cookies are per host); accounts/passwords are untouched.
+- Umami: tracks by raw IP → untouched.
 
 ## Sources
 - Discourse install: https://github.com/discourse/discourse_docker
