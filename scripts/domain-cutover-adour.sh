@@ -2,7 +2,8 @@
 # Domain cutover: landes-insoumises.fr -> adour-en-commun.fr (site + forum).
 #
 # Runs ON THE PROD SERVER as `ubuntu`:   bash ~/domain-cutover-adour.sh
-#   YES=1              skip the confirmation prompt
+#   YES=1              skip the confirmation prompt (needed when there is no TTY, e.g. detached:
+#                      YES=1 setsid -f bash ~/domain-cutover-adour.sh > ~/domain-cutover.log 2>&1 < /dev/null)
 #   SKIP_MAIL_CHECK=1  cut over even if Mailjet isn't validated for the new domain
 #                      (keeps sending as noreply@landes-insoumises.fr for now)
 #
@@ -80,7 +81,7 @@ for h in "$OLD" "www.$OLD" "forum.$OLD"; do printf '  %-32s -> %s\n' "$h" "$(a_r
 echo "Mailjet DNS on $NEW:"
 spf=$(txt_rec "$NEW" | grep -i 'v=spf1' || true)
 dkim=$(txt_rec "mailjet._domainkey.$NEW")
-printf '  SPF : %s\n  DKIM: %s\n' "${spf:-<none>}" "${dkim:+present}${dkim:-<none>}"
+printf '  SPF : %s\n  DKIM: %s\n' "${spf:-<none>}" "$( [[ -n $dkim ]] && echo present || echo '<none>')"
 if [[ $spf == *spf.mailjet.com* && -n $dkim ]]; then
   MAIL_MODE=new
   echo "  -> transactional mail will be sent as noreply@$NEW"
@@ -101,6 +102,7 @@ Plan:
   Backups     $BK
 EOF
 if [[ ${YES:-0} != 1 ]]; then
+  [[ -t 0 ]] || die "no terminal for the confirmation prompt. Either run from a real terminal (ssh -t ...), or detach it: YES=1 setsid -f bash ~/domain-cutover-adour.sh > ~/domain-cutover.log 2>&1 < /dev/null"
   read -rp "Type YES to proceed: " ans; [[ $ans == YES ]] || die "aborted"
 fi
 
