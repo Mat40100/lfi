@@ -220,6 +220,11 @@ docker compose up -d caddy
 
 # ---------------------------------------------------------------- 5. verify
 log "verification"
+# Ghost answers 200 a few seconds before its settings/url services are warm (the
+# tracker tag is missing until then): wait for its own healthcheck first.
+for i in $(seq 1 60); do
+  [[ $(docker inspect lfi-ghost-1 --format '{{.State.Health.Status}}' 2>/dev/null) == healthy ]] && break; sleep 3
+done
 for i in $(seq 1 30); do [[ $(http_code "$SITE_URL/") == 200 ]] && break; sleep 2; done
 ok=1
 check() {  # check <label> <accepted-codes-regex> <curl args...>
