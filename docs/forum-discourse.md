@@ -171,18 +171,20 @@ sudo docker exec app bash -lc "cd /var/www/discourse && su discourse -c 'RAILS_E
 - 2026-07 → 2026-08 — Ghost SSO era (DoG + tier gate + team console). Domain migration
   `lol-reminder.fr → landes-insoumises.fr` on 2026-07-31 (`DISCOURSE_HOSTNAME` + rebuild).
 - **2026-09-05 — SSO removed, forum standalone** (see History above).
-- **2026-09 — domain migration `landes-insoumises.fr → adour-en-commun.fr`** — prepared 2026-09-23, **not run yet** (domain unregistered); see below. Update this line with the cutover date.
+- **2026-09-23 — domain migration `landes-insoumises.fr → adour-en-commun.fr`** (see below); the
+  launcher rebuild also upgraded the bundled **Postgres 15 → 18** and Discourse to `2026.9`.
 
-## Domain migration `landes-insoumises.fr → adour-en-commun.fr` (2026-09)
+## Domain migration `landes-insoumises.fr → adour-en-commun.fr` (done 2026-09-23)
 
-Everything is done by **`scripts/domain-cutover-adour.sh`** (repo) = `~/domain-cutover-adour.sh`
+Everything was done by **`scripts/domain-cutover-adour.sh`** (repo) = `~/domain-cutover-adour.sh`
 (server), run as `ubuntu`: `bash ~/domain-cutover-adour.sh` (`YES=1` skips the prompt). It is
 guarded and idempotent — re-running it only redoes what still differs.
 
 **Prerequisites (operator, before running):**
-1. Register `adour-en-commun.fr` (it did not exist on 2026-09-23) and, in the OVH zone, add
+1. Register the domain and, in the OVH zone, add
    `A @`, `A www`, `A forum` → `37.59.103.153`. **Delete OVH's parking `A 213.186.33.5`**
-   (same trap as 2026-07-31). The script refuses to run until all three resolve.
+   (same trap as 2026-07-31 — and again on 2026-09-23, on `www`). The script refuses to run until all
+   three resolve to exactly that IP.
 2. Mailjet → Senders & domains → add `adour-en-commun.fr`, put its SPF (`include:spf.mailjet.com`)
    and DKIM (`mailjet._domainkey`) TXT records in the zone, validate. Ghost sends member
    magic-links as `noreply@<site host>` and Discourse as `DISCOURSE_NOTIFICATION_EMAIL`, so an
@@ -199,9 +201,23 @@ guarded and idempotent — re-running it only redoes what still differs.
   Mailgun domain first, then change it in Ghost Admin → Email newsletter).
 - Discourse: `DISCOURSE_HOSTNAME` (+ notification e-mail) in `app.yml` → `./launcher rebuild app`
   (**forum down ~10–15 min**), `docker network connect lfi_web app`, then `rake posts:remap`
-  for the 7 posts that link to the old host and `SiteSetting.vapid_base_url`. Users must log in
-  again (cookies are per host); accounts/passwords are untouched.
+  for the posts that link to the old host (5 remapped + 2 rebaked on 2026-09-23) and
+  `SiteSetting.vapid_base_url`. Users must log in again (cookies are per host); accounts/passwords
+  are untouched.
 - Umami: tracks by raw IP → untouched.
+
+**How it went (2026-09-23), for next time:**
+- Run 1: site side done in ~1 min (certs for apex/`www`/`forum` issued at once). The Discourse
+  `./launcher rebuild` first self-updated `discourse_docker`, pulled base image `2.0.20260915`,
+  **upgraded Postgres 15 → 18** (old cluster kept at `shared/standalone/postgres_data_old`, ~260 MB,
+  safe to delete once happy), then **stopped and asked for a second `rebuild`** — the script died
+  there with the forum down (502).
+- Run 2: aborted itself (Caddyfile re-run bug, fixed) — nothing applied thanks to the validate-first
+  + rollback.
+- Run 3: second rebuild (~7 min: migrations + prebuilt assets), `lfi_web` re-attached, remap OK.
+  Total forum downtime ≈ 25 min. The script now rebuilds whenever the `app` container is not
+  running, so "rebuild again" just means re-running it.
+- `app.yml` was world-readable (launcher warning) → `chmod o-rwx` applied.
 
 ## Sources
 - Discourse install: https://github.com/discourse/discourse_docker
