@@ -2,9 +2,10 @@
 
 > **Living runbook.** Every post published in Ghost is shared on the site's Facebook
 > Page by a tiny service of this stack (`social-publisher/`, ~300 lines of plain
-> Node, no dependencies). Built and tested locally on **2026-10-28**; the production
-> rollout waits for the Meta side (a Page + an app + a Page token, operator steps
-> below), then `scripts/social-deploy-prod.sh`.
+> Node, no dependencies). Built, tested locally and **deployed to production on
+> 2026-10-28** (`scripts/social-deploy-prod.sh`; webhook created with
+> `scripts/social-webhook.sh` on the Ghost custom integration "Facebook"). Page:
+> *l'Adour en commun* (`1273835645808453`), Meta app `4573195109567373`.
 >
 > Instagram is **not** covered (it needs an image upload flow and a Business/Creator
 > account); the n8n plan in `docs/n8n-social-publishing.md` remains the option for it.
