@@ -31,8 +31,8 @@ facebook-token: .env ## Interactive: turn a short-lived Meta user token into FAC
 
 social-check: .env ## Verify the Facebook Page token in .env (and the webhook URL/secret to enter in Ghost Admin)
 	$(COMPOSE) run --rm social-publisher check
-	@echo; echo 'Ghost Admin → Settings → Integrations → custom integration → Add webhook:'
-	@echo '  Event:      Post published'
+	@echo; echo 'Ghost Admin → Settings → Integrations → custom integration → Add webhook (one per event):'
+	@echo '  Events:     "Post published"  and  "Published post updated"'
 	@echo '  Target URL: http://social-publisher.lfi.internal:8080/webhooks/ghost'
 	@grep -E '^SOCIAL_WEBHOOK_SECRET=.+' .env | sed 's/^SOCIAL_WEBHOOK_SECRET=/  Secret:     /' \
 		|| echo '  Secret:     (SOCIAL_WEBHOOK_SECRET missing in .env — add one: openssl rand -hex 32)'

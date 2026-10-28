@@ -19,8 +19,14 @@ Ghost ── post.published webhook (HMAC-signed) ──▶ social-publisher ─
 ```
 
 - **Trigger:** Ghost's own webhook system (Settings → Integrations → custom
-  integration → webhook, event *Post published*). Scheduled posts fire it when the
-  scheduler publishes them. Pages (`page.published`) are not shared.
+  integration → webhooks). Two events, same target:
+  - *Post published* → shared right away. Scheduled posts fire it when the
+    scheduler publishes them. Pages (`page.published`) are not shared.
+  - *Published post updated* → the **"share this older post" button**: Ghost
+    sends it on every save of an already-published post; the publisher acts only
+    when the post carries the internal tag **`#facebook`** (`SOCIAL_SHARE_TAG`,
+    slug `hash-facebook`) and was not shared yet. Add the tag, click *Update*,
+    done. Any other edit is ignored silently.
 - **Transport:** Ghost POSTs straight to the publisher over the `social` network.
   Ghost's outbound SSRF guard refuses webhook targets that resolve to private IPs,
   so the `ghost` service sets `security__allowWebhookInternalIPs=true` (only
@@ -43,9 +49,11 @@ Ghost ── post.published webhook (HMAC-signed) ──▶ social-publisher ─
   title, description) from the article's Open Graph tags, which Ghost generates
   from the feature image / meta fields — **always set a feature image**.
 - **Rules:** skipped when the post is email-only (no public page), or carries the
-  internal tag **`#no-facebook`** (slug `hash-no-facebook`, `SOCIAL_SKIP_TAG`), or
-  was **already shared** (`data/social-publisher/shared-posts.json` keeps the
-  Facebook post id per Ghost post id, so unpublish → republish does not post twice).
+  internal tag **`#no-facebook`** (slug `hash-no-facebook`, `SOCIAL_SKIP_TAG` —
+  it wins over `#facebook`), or was **already shared**
+  (`data/social-publisher/shared-posts.json` keeps the Facebook post id per Ghost
+  post id, so unpublish → republish, or tagging an auto-shared post `#facebook`,
+  does not post twice).
 - **Ghost never depends on it:** if the publisher is down, Ghost logs a failed
   webhook delivery and the site is unaffected.
 
@@ -129,16 +137,16 @@ logged, nothing is sent.
 ### 3. The Ghost webhook
 
 Ghost Admin → Settings → Integrations → *Add custom integration* (e.g. "Facebook")
-→ *Add webhook*:
+→ *Add webhook*, **twice** (one per event):
 
-| Field      | Value                                                       |
-|------------|-------------------------------------------------------------|
-| Name       | Facebook (social-publisher)                                 |
-| Event      | **Post published**                                          |
-| Target URL | `http://social-publisher.lfi.internal:8080/webhooks/ghost`  |
-| Secret     | the `SOCIAL_WEBHOOK_SECRET` value from `.env` (`make social-check` prints it) |
+| Field      | Webhook 1                                 | Webhook 2                                   |
+|------------|-------------------------------------------|---------------------------------------------|
+| Name       | Facebook (social-publisher)               | Facebook (social-publisher) — share on edit |
+| Event      | **Post published**                        | **Published post updated**                  |
+| Target URL | `http://social-publisher.lfi.internal:8080/webhooks/ghost` | same                       |
+| Secret     | the `SOCIAL_WEBHOOK_SECRET` value from `.env` (`make social-check` prints it) | same |
 
-Scripted alternative (idempotent), with that integration's *Admin API key*:
+Scripted alternative (idempotent, creates both), with that integration's *Admin API key*:
 
 ```bash
 scripts/social-webhook.sh https://adour-en-commun.fr <admin-api-key>
@@ -172,6 +180,11 @@ make social-test                                             # unit + integratio
 
 - **Keep a post off Facebook:** add the internal tag `#no-facebook` *before*
   publishing (tags are read from the webhook payload at publish time).
+- **Share an older / already-published post:** open it in Ghost Admin, add the
+  internal tag `#facebook`, click *Update*. ~10 s later it is on the Page
+  (logs: `queued "…" (post.published.edited)` → `shared`). Already-shared posts
+  are not re-posted; `#no-facebook` blocks it. One post at a time on purpose:
+  backfilling a whole archive onto a Facebook feed is bad practice anyway.
 - **Share a post again on purpose:** delete its entry from
   `data/social-publisher/shared-posts.json`, `docker compose restart
   social-publisher` (the list is loaded at start), then unpublish → republish.

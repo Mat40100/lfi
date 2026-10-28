@@ -17,7 +17,8 @@
 #   3. build + start social-publisher, recreate ghost (new env + `social` network, ~15 s blip)
 #   4. verify: publisher healthy + reachable from the ghost container, no published port,
 #      Page token valid (`check`), site up
-#   5. Ghost webhook: created via the Admin API when GHOST_ADMIN_API_KEY is set, else printed
+#   5. Ghost webhooks (post.published + post.published.edited): created via the Admin API
+#      when GHOST_ADMIN_API_KEY is set, else printed
 set -euo pipefail
 
 LFI=$HOME/lfi
@@ -127,18 +128,18 @@ else
 fi
 
 # ---------------------------------------------------------------- 5. Ghost webhook
-log "Ghost webhook (post.published → social-publisher)"
+log "Ghost webhooks (post.published + post.published.edited → social-publisher)"
 if [[ -n ${GHOST_ADMIN_API_KEY:-} ]]; then
   ./scripts/social-webhook.sh "$GHOST_URL" "$GHOST_ADMIN_API_KEY" "$TARGET_URL" "$SECRET" || ok=0
 else
   cat <<EOT
-  Create it once in Ghost Admin → Settings → Integrations → "Add custom integration"
-  (e.g. "Facebook") → "Add webhook":
-      Name:        Facebook (social-publisher)
-      Event:       Post published
+  Create them once in Ghost Admin → Settings → Integrations → "Add custom integration"
+  (e.g. "Facebook") → "Add webhook", one per event:
+      Events:      "Post published"            (share on publish)
+                   "Published post updated"    (share an older post saved with the #facebook tag)
       Target URL:  $TARGET_URL
       Secret:      $SECRET
-  (or re-run this script with GHOST_ADMIN_API_KEY=<that integration's Admin API key> to create it)
+  (or re-run this script with GHOST_ADMIN_API_KEY=<that integration's Admin API key> to create them)
 EOT
 fi
 

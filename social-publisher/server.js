@@ -6,6 +6,8 @@
  * /webhooks/ghost. We answer within milliseconds — Ghost gives up after 2 s and
  * never retries a POST — then, in the background, publish "title + excerpt" with
  * the article link on the Page through the Graph API (POST /{page-id}/feed).
+ * Older posts are shared after the fact by tagging them (#facebook): Ghost then
+ * sends "post.published.edited", which is honoured only when that tag is present.
  * Facebook builds the link preview from the article's Open Graph tags, which
  * Ghost renders from the post's feature image.
  *
@@ -33,6 +35,8 @@ function loadConfig(env = process.env) {
     graphUrl: (env.FACEBOOK_GRAPH_URL || 'https://graph.facebook.com').replace(/\/+$/, ''),
     dryRun: /^(1|true|yes|on)$/i.test(env.FACEBOOK_DRY_RUN || ''),
     skipTag: env.SOCIAL_SKIP_TAG || 'hash-no-facebook',
+    // Internal tag that shares an already-published post when it is edited.
+    shareTag: env.SOCIAL_SHARE_TAG || 'hash-facebook',
     stateDir: env.STATE_DIR || '/data',
     // Let Ghost's URL service / cache catch up with the event before Facebook scrapes the page.
     publishDelayMs: Number(env.PUBLISH_DELAY_MS ?? 5000),
@@ -95,13 +99,25 @@ function buildMessage(post, { excerptMaxChars = 280 } = {}) {
   return [title, excerpt].filter(Boolean).join('\n\n');
 }
 
-/** What to do with a webhook payload: share | skip | ignore | invalid (+ reason). */
-function decide(body, { skipTag, canShare, alreadyShared }) {
-  if (!body || body.event !== 'post.published') {
-    return { action: 'ignore', reason: `event ${(body && body.event) || 'unknown'}` };
+/**
+ * What to do with a webhook payload: share | skip | ignore | invalid (+ reason).
+ *   post.published         → share, unless opted out (skip tag) / email-only / already shared
+ *   post.published.edited  → share only when the post carries the share tag (the
+ *                            "send this older post now" button); other edits are
+ *                            ignored quietly (Ghost sends one per edit)
+ */
+function decide(body, { skipTag, shareTag, canShare, alreadyShared }) {
+  const event = body && body.event;
+  if (event !== 'post.published' && event !== 'post.published.edited') {
+    return { action: 'ignore', reason: `event ${event || 'unknown'}` };
   }
   const post = body.post && body.post.current;
   if (!post || !post.id || !post.url) return { action: 'invalid', reason: 'payload has no post.current.id / url' };
+  const tags = Array.isArray(post.tags) ? post.tags : [];
+  const hasTag = (slug) => Boolean(slug) && tags.some((t) => t && t.slug === slug);
+  if (event === 'post.published.edited' && !hasTag(shareTag)) {
+    return { action: 'ignore', reason: `edit without the ${shareTag} tag`, quiet: true };
+  }
   const summary = {
     id: post.id,
     title: String(post.title || '').trim(),
@@ -112,8 +128,7 @@ function decide(body, { skipTag, canShare, alreadyShared }) {
   };
   if (post.status !== 'published') return { action: 'skip', reason: `status is ${post.status}`, post: summary };
   if (post.email_only) return { action: 'skip', reason: 'email-only post (no public page)', post: summary };
-  const tags = Array.isArray(post.tags) ? post.tags : [];
-  if (skipTag && tags.some((t) => t && t.slug === skipTag)) return { action: 'skip', reason: `tagged ${skipTag}`, post: summary };
+  if (hasTag(skipTag)) return { action: 'skip', reason: `tagged ${skipTag}`, post: summary };
   if (alreadyShared(post.id)) return { action: 'skip', reason: 'already shared on Facebook', post: summary };
   if (!canShare) return { action: 'skip', reason: 'publisher not configured (FACEBOOK_PAGE_ID / FACEBOOK_PAGE_ACCESS_TOKEN)', post: summary };
   return { action: 'share', post: summary };
@@ -333,9 +348,12 @@ function createServer(cfg, publisher, state) {
       sendJson(res, 400, { error: 'invalid JSON' });
       return;
     }
-    const decision = decide(body, { skipTag: cfg.skipTag, canShare, alreadyShared: (id) => state.has(id) });
+    const decision = decide(body, {
+      skipTag: cfg.skipTag, shareTag: cfg.shareTag, canShare, alreadyShared: (id) => state.has(id),
+    });
     switch (decision.action) {
       case 'ignore':
+        if (!decision.quiet) log('info', `ignored webhook: ${decision.reason}`);
         sendJson(res, 202, { ignored: decision.reason });
         return;
       case 'invalid':
@@ -347,7 +365,7 @@ function createServer(cfg, publisher, state) {
         sendJson(res, 202, { skipped: decision.reason });
         return;
       default:
-        log('info', `queued "${decision.post.title}"`, { link: decision.post.url });
+        log('info', `queued "${decision.post.title}" (${body.event})`, { link: decision.post.url });
         publisher.enqueue(decision.post);
         sendJson(res, 202, { queued: true });
     }
@@ -390,6 +408,7 @@ async function serve(cfg) {
     webhook_secret: cfg.webhookSecret ? 'set' : 'MISSING',
     dry_run: cfg.dryRun,
     skip_tag: cfg.skipTag,
+    share_tag: cfg.shareTag,
     shared_so_far: state.count(),
   });
   if (!cfg.webhookSecret) log('warn', 'GHOST_WEBHOOK_SECRET is empty: every webhook will be rejected (401) until SOCIAL_WEBHOOK_SECRET is set in .env');
@@ -421,7 +440,7 @@ async function check(cfg) {
   console.log(`Page token:     ${cfg.pageToken ? `set (${cfg.pageToken.length} chars)` : 'MISSING'}`);
   console.log(`Webhook secret: ${cfg.webhookSecret ? 'set' : 'MISSING'}`);
   console.log(`Dry run:        ${cfg.dryRun}`);
-  console.log(`Skip tag:       ${cfg.skipTag}`);
+  console.log(`Skip tag:       ${cfg.skipTag}   share-later tag: ${cfg.shareTag}`);
   if (!isConfigured(cfg)) {
     console.error('\nFACEBOOK_PAGE_ID / FACEBOOK_PAGE_ACCESS_TOKEN missing in .env — run `make facebook-token` (docs/social-facebook.md).');
     return 1;

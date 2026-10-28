@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# Create the Ghost webhook that feeds social-publisher, through the Admin API —
+# Create the two Ghost webhooks that feed social-publisher, through the Admin API —
 # the scripted alternative to Ghost Admin → Settings → Integrations → <your
-# integration> → Add webhook. Idempotent: Ghost refuses a second webhook with the
-# same event + target URL, which this script reports as "already exists".
+# integration> → Add webhook:
+#   post.published         share a post when it is published
+#   post.published.edited  share an already-published post when it is saved with
+#                          the #facebook tag (the "send this older post" button)
+# Idempotent: Ghost refuses a second webhook with the same event + target URL,
+# which this script reports as "already exists".
 #
 #   scripts/social-webhook.sh <ghost-url> <admin-api-key> [target-url] [secret]
 #
@@ -41,24 +45,29 @@ ghost_jwt() {
   printf '%s.%s.%s' "$header" "$payload" "$sig"
 }
 
-body=$(printf '{"webhooks":[{"name":"Facebook (social-publisher)","event":"post.published","target_url":"%s","secret":"%s"}]}' "$TARGET_URL" "$SECRET")
 out=$(mktemp); trap 'rm -f "$out"' EXIT
-code=$(curl -sS ${CURL_OPTS:-} -o "$out" -w '%{http_code}' -m 30 -X POST \
-  -H "Authorization: Ghost $(ghost_jwt)" -H 'Content-Type: application/json' -H 'Accept-Version: v6.0' \
-  --data "$body" "$GHOST_URL/ghost/api/admin/webhooks/")
+create_webhook() {  # create_webhook <event> <name>
+  local event=$1 name=$2 body code
+  body=$(printf '{"webhooks":[{"name":"%s","event":"%s","target_url":"%s","secret":"%s"}]}' "$name" "$event" "$TARGET_URL" "$SECRET")
+  code=$(curl -sS ${CURL_OPTS:-} -o "$out" -w '%{http_code}' -m 30 -X POST \
+    -H "Authorization: Ghost $(ghost_jwt)" -H 'Content-Type: application/json' -H 'Accept-Version: v6.0' \
+    --data "$body" "$GHOST_URL/ghost/api/admin/webhooks/")
+  case $code in
+    201)
+      echo "webhook created: $event → $TARGET_URL"
+      ;;
+    422)
+      if grep -q 'already been used' "$out"; then
+        echo "webhook already exists: $event → $TARGET_URL (nothing to do)"
+      else
+        echo "error: Ghost rejected the $event webhook (422):" >&2; cat "$out" >&2; echo >&2; return 1
+      fi
+      ;;
+    *)
+      echo "error: HTTP $code from $GHOST_URL/ghost/api/admin/webhooks/ ($event):" >&2; cat "$out" >&2; echo >&2; return 1
+      ;;
+  esac
+}
 
-case $code in
-  201)
-    echo "webhook created: post.published → $TARGET_URL"
-    ;;
-  422)
-    if grep -q 'already been used' "$out"; then
-      echo "webhook already exists: post.published → $TARGET_URL (nothing to do)"
-    else
-      echo "error: Ghost rejected the webhook (422):" >&2; cat "$out" >&2; echo >&2; exit 1
-    fi
-    ;;
-  *)
-    echo "error: HTTP $code from $GHOST_URL/ghost/api/admin/webhooks/:" >&2; cat "$out" >&2; echo >&2; exit 1
-    ;;
-esac
+create_webhook post.published        "Facebook (social-publisher)"
+create_webhook post.published.edited "Facebook (social-publisher) — share on edit (#facebook tag)"

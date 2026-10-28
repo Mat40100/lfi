@@ -231,6 +231,9 @@ services:
       FACEBOOK_DRY_RUN: ${FACEBOOK_DRY_RUN:-0}
       # Posts carrying this internal tag (#no-facebook in Ghost) are not shared.
       SOCIAL_SKIP_TAG: ${SOCIAL_SKIP_TAG:-hash-no-facebook}
+      # Add this internal tag (#facebook) to an already-published post and save: it
+      # is shared now (via Ghost's "post.published.edited" webhook).
+      SOCIAL_SHARE_TAG: ${SOCIAL_SHARE_TAG:-hash-facebook}
     volumes:
       # shared-posts.json: which posts went out already (dedupes re-publishes)
       - ./data/social-publisher:/data

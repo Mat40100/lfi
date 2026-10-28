@@ -71,7 +71,7 @@ test('buildMessage: custom excerpt verbatim, auto-excerpt trimmed at a word boun
 });
 
 test('decide: share / skip / ignore rules', () => {
-  const opts = { skipTag: 'hash-no-facebook', canShare: true, alreadyShared: () => false };
+  const opts = { skipTag: 'hash-no-facebook', shareTag: 'hash-facebook', canShare: true, alreadyShared: () => false };
   const parse = (s) => JSON.parse(s);
   assert.equal(app.decide(parse(webhookBody()), opts).action, 'share');
   assert.equal(app.decide({ event: 'post.edited', post: { current: {} } }, opts).action, 'ignore');
@@ -83,6 +83,17 @@ test('decide: share / skip / ignore rules', () => {
   assert.match(app.decide(parse(webhookBody()), { ...opts, canShare: false }).reason, /not configured/);
   const d = app.decide(parse(webhookBody()), opts);
   assert.deepEqual(Object.keys(d.post).sort(), ['custom_excerpt', 'excerpt', 'id', 'plaintext', 'title', 'url']);
+
+  // "share this older post now": an edit of a published post carrying the share tag
+  const edited = (tags) => ({ ...parse(webhookBody({ tags })), event: 'post.published.edited' });
+  const plainEdit = app.decide(edited([{ slug: 'actu' }]), opts);
+  assert.equal(plainEdit.action, 'ignore');
+  assert.equal(plainEdit.quiet, true);
+  assert.equal(app.decide(edited([{ slug: 'hash-facebook', visibility: 'internal' }]), opts).action, 'share');
+  assert.match(app.decide(edited([{ slug: 'hash-facebook' }, { slug: 'hash-no-facebook' }]), opts).reason, /tagged hash-no-facebook/);
+  assert.match(app.decide(edited([{ slug: 'hash-facebook' }]), { ...opts, alreadyShared: () => true }).reason, /already/);
+  // the share tag at publish time changes nothing
+  assert.equal(app.decide(parse(webhookBody({ tags: [{ slug: 'hash-facebook' }] })), opts).action, 'share');
 });
 
 // ---------------------------------------------------------------- integration: webhook → mock Graph API
@@ -183,10 +194,20 @@ test('end to end: signed webhook → one Facebook post, dedupe, auth', async (t)
   assert.deepEqual(await post(body, { 'X-Ghost-Signature': ghostSign(body, SECRET) }), { status: 202, json: { skipped: 'already shared on Facebook' } });
   await publisher.chain;
   assert.equal(graphRequests.filter((r) => r.path === '/v26.0/4242/feed').length, 2);
+  assert.deepEqual(await post(body, { 'X-Ghost-Signature': ghostSign(body, SECRET) }), { status: 202, json: { skipped: 'already shared on Facebook' } });
 
   // the opt-out tag
   const tagged = webhookBody({ id: 'post-2', url: articleUrl, tags: [{ slug: 'hash-no-facebook', visibility: 'internal' }] });
   assert.deepEqual(await post(tagged, { 'X-Ghost-Signature': ghostSign(tagged, SECRET) }), { status: 202, json: { skipped: 'tagged hash-no-facebook' } });
+
+  // an older post shared after the fact: edit event + share tag
+  const plainEdit = JSON.stringify({ ...JSON.parse(webhookBody({ id: 'post-old', url: articleUrl })), event: 'post.published.edited' });
+  assert.deepEqual(await post(plainEdit, { 'X-Ghost-Signature': ghostSign(plainEdit, SECRET) }), { status: 202, json: { ignored: 'edit without the hash-facebook tag' } });
+  const taggedEdit = JSON.stringify({ ...JSON.parse(webhookBody({ id: 'post-old', url: articleUrl, tags: [{ slug: 'hash-facebook', visibility: 'internal' }] })), event: 'post.published.edited' });
+  assert.deepEqual(await post(taggedEdit, { 'X-Ghost-Signature': ghostSign(taggedEdit, SECRET) }), { status: 202, json: { queued: true } });
+  await waitFor(() => state.has('post-old'));
+  assert.equal(graphRequests.filter((r) => r.path === '/v26.0/4242/feed').length, 3);
+  assert.deepEqual(await post(taggedEdit, { 'X-Ghost-Signature': ghostSign(taggedEdit, SECRET) }), { status: 202, json: { skipped: 'already shared on Facebook' } });
 
   // a permanent Graph API error is logged, not retried, not recorded
   const bad = webhookBody({ id: 'post-3', url: articleUrl });
@@ -199,6 +220,7 @@ test('end to end: signed webhook → one Facebook post, dedupe, auth', async (t)
   assert.equal(r.status, 202);
   await publisherBad.chain;
   assert.equal(graphRequests.filter((x) => x.path === '/v26.0/9999/feed').length, 1, 'no retry on a permanent (#100) error');
+  // (the main page received 3 posts so far: post-1, post-old)
   assert.equal(state.has('post-3'), false);
 
   // dry run: nothing is sent, nothing recorded
@@ -211,7 +233,7 @@ test('end to end: signed webhook → one Facebook post, dedupe, auth', async (t)
   const rd = await fetch(`http://127.0.0.1:${portDry}/webhooks/ghost`, { method: 'POST', body: dry, headers: { 'X-Ghost-Signature': ghostSign(dry, SECRET) } });
   assert.equal(rd.status, 202);
   await publisherDry.chain;
-  assert.equal(graphRequests.filter((x) => x.path === '/v26.0/4242/feed').length, 2);
+  assert.equal(graphRequests.filter((x) => x.path === '/v26.0/4242/feed').length, 3);
   assert.equal(state.has('post-4'), false);
 });
 
