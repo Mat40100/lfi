@@ -13,12 +13,14 @@ and reverse-proxied by [Caddy](https://caddyserver.com/) (not nginx).
 | `tinybird-local` | custom (`./tinybird-local`, from `tinybirdco/tinybird-local`) | Self-hosted Tinybird: store + API behind Ghost's native **Analytics** screens |
 | `tinybird-deploy` | custom (`./tinybird`, `tb` CLI + Ghost's Tinybird project) | One-shot: deploys Ghost's datasources/pipes into `tinybird-local`, prints tokens |
 | `traffic-analytics` | `ghost/traffic-analytics` | Ghost's page-hit proxy (bot filtering, privacy-preserving signatures) |
+| `social-publisher` | custom (`./social-publisher`, `node:22-alpine`, no deps) | Shares every published post on a Facebook Page (Ghost webhook → Graph API); internal only |
 
 Data persists in local bind-mounted folders under `./data/`
 (`data/ghost-content`, `data/mysql`, `data/caddy/data`, `data/caddy/config`,
-`data/tinybird/{clickhouse,redis}`, `data/traffic-analytics`).
+`data/tinybird/{clickhouse,redis}`, `data/traffic-analytics`, `data/social-publisher`).
 
 Web analytics are fully self-hosted: see [`docs/analytics-tinybird.md`](docs/analytics-tinybird.md).
+Facebook auto-share setup (Meta app, Page token, Ghost webhook): [`docs/social-facebook.md`](docs/social-facebook.md).
 
 ## Quick start
 

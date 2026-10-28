@@ -12,6 +12,9 @@
 #   traffic-analytics -> Ghost's official page-hit proxy: browser -> Caddy
 #                        (/.ghost/analytics/*) -> here (bot filter, UA parsing, salted
 #                        user signature) -> tinybird-local /v0/events
+#   social-publisher  -> shares every published post on a Facebook Page: Ghost's
+#                        "post.published" webhook -> here (private network) ->
+#                        Graph API POST /{page}/feed. Setup: docs/social-facebook.md
 #
 # Copy .env.example to .env and set passwords before `docker compose up -d`.
 # First analytics boot: `make analytics-init` (or `make dev` / `make prod`, which run it)
@@ -39,6 +42,10 @@ services:
       # No mail transport is configured yet; without this, admin login tries to
       # email a device-verification code and fails with a 500.
       security__staffDeviceVerification: "false"
+      # Webhooks may target the private `social` network (social-publisher). Ghost's
+      # outbound SSRF guard otherwise refuses webhook URLs that resolve to private
+      # IPs; only Administrators can create webhooks, so this is safe to relax here.
+      security__allowWebhookInternalIPs: "true"
       # --- Web analytics (Tinybird) ---------------------------------------
       # workspaceId + adminToken let Ghost sign short-lived JWTs (read-only pipe
       # scopes) for the Analytics screens. Empty until `make analytics-init` has
@@ -60,6 +67,7 @@ services:
     networks:
       - web
       - internal
+      - social
 
   mysql:
     image: mysql:8.0
@@ -197,6 +205,48 @@ services:
     networks:
       - analytics
 
+  # Facebook auto-share (docs/social-facebook.md). Ghost POSTs its signed
+  # "post.published" webhook to http://social-publisher.lfi.internal:8080/webhooks/ghost
+  # over the private `social` network — never through Caddy, nothing is public.
+  # The publisher answers at once (Ghost drops the request after 2 s), then calls
+  # the Graph API with title + excerpt + link; Facebook builds the preview from
+  # the article's Open Graph tags. Ghost does NOT depend on it: Facebook must
+  # never block the site. Re-publishing a post is deduplicated (data/social-publisher).
+  social-publisher:
+    build:
+      context: ./social-publisher
+    image: lfi-social-publisher:latest
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      # Shared with the Ghost webhook ("Secret" field): every request is HMAC-checked.
+      GHOST_WEBHOOK_SECRET: ${SOCIAL_WEBHOOK_SECRET:-}
+      # The Page + its never-expiring Page access token — `make facebook-token`.
+      FACEBOOK_PAGE_ID: ${FACEBOOK_PAGE_ID:-}
+      FACEBOOK_PAGE_ACCESS_TOKEN: ${FACEBOOK_PAGE_ACCESS_TOKEN:-}
+      FACEBOOK_GRAPH_VERSION: ${FACEBOOK_GRAPH_VERSION:-v26.0}
+      # Only used by `make facebook-token` (prompt default); not needed to post.
+      FACEBOOK_APP_ID: ${FACEBOOK_APP_ID:-}
+      # 1 = log what would be posted, call nothing (local testing without a token).
+      FACEBOOK_DRY_RUN: ${FACEBOOK_DRY_RUN:-0}
+      # Posts carrying this internal tag (#no-facebook in Ghost) are not shared.
+      SOCIAL_SKIP_TAG: ${SOCIAL_SKIP_TAG:-hash-no-facebook}
+    volumes:
+      # shared-posts.json: which posts went out already (dedupes re-publishes)
+      - ./data/social-publisher:/data
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      social:
+        # Ghost's URL validator rejects single-label hosts ("social-publisher"), so the
+        # webhook target uses this dotted alias.
+        aliases:
+          - social-publisher.lfi.internal
+
 networks:
   # caddy <-> ghost
   web:
@@ -204,3 +254,6 @@ networks:
   internal:
   # caddy <-> traffic-analytics / tinybird-local, traffic-analytics + tinybird-deploy <-> tinybird-local
   analytics:
+  # ghost -> social-publisher (webhook). Not reachable from caddy or the host;
+  # the publisher only needs outbound HTTPS to graph.facebook.com.
+  social:

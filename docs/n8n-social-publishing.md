@@ -1,5 +1,10 @@
 # Auto-publication des articles Ghost vers Facebook & Instagram (n8n)
 
+> **Mise à jour 2026-10-28 : la partie Facebook est faite SANS n8n** — par le
+> service `social-publisher` de ce dépôt (webhook Ghost → Graph API, rien
+> d'exposé, ~300 lignes). Runbook : **`docs/social-facebook.md`**. Ce document
+> reste le plan pour **Instagram** (pas couvert par `social-publisher`).
+>
 > **Statut : NON DÉPLOYÉ — plan d'implémentation.** Ce document décrit la
 > solution self-hosted retenue (n8n) pour republier automatiquement les
 > articles Ghost sur une Page Facebook et un compte Instagram. À dérouler

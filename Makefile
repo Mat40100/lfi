@@ -2,7 +2,7 @@
 
 COMPOSE := docker compose
 
-.PHONY: help dev prod analytics-init down logs ps
+.PHONY: help dev prod analytics-init facebook-token social-check social-test down logs ps
 
 help: ## Show available targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-15s %s\n", $$1, $$2}'
@@ -25,6 +25,20 @@ prod: .env ## Launch the production stack (GHOST_URL must point at the server's 
 
 analytics-init: .env ## (Re)deploy Ghost's Tinybird pipes and write the TINYBIRD_* tokens into .env
 	./scripts/analytics-init.sh
+
+facebook-token: .env ## Interactive: turn a short-lived Meta user token into FACEBOOK_PAGE_ID + a permanent Page token (docs/social-facebook.md)
+	$(COMPOSE) run --rm -e FB_APP_ID -e FB_APP_SECRET -e FB_USER_TOKEN social-publisher token
+
+social-check: .env ## Verify the Facebook Page token in .env (and the webhook URL/secret to enter in Ghost Admin)
+	$(COMPOSE) run --rm social-publisher check
+	@echo; echo 'Ghost Admin → Settings → Integrations → custom integration → Add webhook:'
+	@echo '  Event:      Post published'
+	@echo '  Target URL: http://social-publisher.lfi.internal:8080/webhooks/ghost'
+	@grep -E '^SOCIAL_WEBHOOK_SECRET=.+' .env | sed 's/^SOCIAL_WEBHOOK_SECRET=/  Secret:     /' \
+		|| echo '  Secret:     (SOCIAL_WEBHOOK_SECRET missing in .env — add one: openssl rand -hex 32)'
+
+social-test: ## Run the publisher's tests (node --test in a throwaway container, no network)
+	docker run --rm -v "$(CURDIR)/social-publisher:/app:ro" -w /app node:22-alpine node --test
 
 down: ## Stop the stack
 	$(COMPOSE) down
