@@ -1,7 +1,10 @@
 <!-- Loaded automatically from /etc/clickhouse-server/config.d/ (see ../Dockerfile). -->
 <clickhouse>
-    <!-- Explicit own-process budget (1.5 GiB) instead of 90% of the cgroup. -->
-    <max_server_memory_usage>1610612736</max_server_memory_usage>
+    <!-- Explicit own-process budget (2 GiB) instead of 90% of the cgroup.
+         Hot-reloadable (system.server_settings: changeable_without_restart=Yes),
+         so a running container can be rescued by editing this file in place —
+         that is what scripts/analytics-recover-prod.sh does. -->
+    <max_server_memory_usage>2147483648</max_server_memory_usage>
     <!-- Track ClickHouse's own RSS, not the cgroup's usage (which includes
          Tinybird's Python workers, ~2 GB): otherwise "Memory limit (total)
          exceeded" fires at idle. memory_worker_* is the 24.9+ mechanism,
@@ -11,6 +14,26 @@
     <!-- Upstream: 5 GiB / 8 GiB. A blog's analytics tables are tiny. -->
     <mark_cache_size>268435456</mark_cache_size>
     <uncompressed_cache_size>268435456</uncompressed_cache_size>
+    <!-- ClickHouse's own system logs (upstream config: 3-month TTL). Every part
+         of a MergeTree table costs ~100 KB of RAM for as long as it exists, and
+         these three tables get one new part per 7.5 s flush each. Incident
+         2026-10-29: query_views_log alone held 17k part directories / 1.3 GB, ClickHouse's
+         RSS crept past its 1.5 GiB budget, every merge AND every query died with
+         MEMORY_LIMIT_EXCEEDED (Tinybird answers 429, Ghost Admin shows 0
+         visitors) and parts could no longer be merged away — a dead end only a
+         restart fixes. Keep the logs (Tinybird reads query_log / query_views_log
+         for its own ops tracking) but expire them after 3 days.
+         Changing a TTL here makes ClickHouse rename the existing table to
+         <name>_0 at startup and create a fresh one — drop the renamed copy. -->
+    <query_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </query_log>
+    <query_views_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </query_views_log>
+    <part_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </part_log>
     <!-- Do NOT lower max_concurrent_queries (upstream: 100): Tinybird's first boot
          runs dozens of concurrent CREATE TABLE ON CLUSTER for its internal
          datasources; on a slow box a lower limit makes ClickHouse reject some

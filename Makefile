@@ -2,7 +2,7 @@
 
 COMPOSE := docker compose
 
-.PHONY: help dev prod analytics-init facebook-token social-check social-test down logs ps
+.PHONY: help dev prod analytics-init analytics-check facebook-token social-check social-test down logs ps
 
 help: ## Show available targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-15s %s\n", $$1, $$2}'
@@ -25,6 +25,9 @@ prod: .env ## Launch the production stack (GHOST_URL must point at the server's 
 
 analytics-init: .env ## (Re)deploy Ghost's Tinybird pipes and write the TINYBIRD_* tokens into .env
 	./scripts/analytics-init.sh
+
+analytics-check: .env ## Analytics health: ClickHouse memory budget / parts + the api_kpis pipe queried like Ghost does
+	./scripts/analytics-check.sh
 
 facebook-token: .env ## Interactive: turn a short-lived Meta user token into FACEBOOK_PAGE_ID + a permanent Page token (docs/social-facebook.md)
 	$(COMPOSE) run --rm -e FB_APP_ID -e FB_APP_SECRET -e FB_USER_TOKEN social-publisher token

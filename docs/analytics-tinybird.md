@@ -76,6 +76,15 @@ analytics* is on (it is by default).
   ("processing too many queries"), the internal workspace never initialised and
   the API never listened on 8001 (nginx 502 on `/v0/health` forever). A first
   boot there takes minutes, hence the 600 s healthcheck grace period.
+- **ClickHouse's own system logs can eat the memory budget.** Every part of a
+  MergeTree table costs ~100 KB of RAM while it exists, and `system.query_log`,
+  `system.query_views_log`, `system.part_log` (enabled by upstream's config with
+  a 3-month TTL) each get a new part per 7.5 s flush. Once ClickHouse's RSS
+  crosses `max_server_memory_usage`, *every* query **and every merge** fails with
+  `MEMORY_LIMIT_EXCEEDED` — parts can no longer be merged away, memory never
+  comes back, Tinybird answers **HTTP 429** and Ghost shows **0 visitors**. Only a
+  restart gets out of it (`scripts/analytics-recover-prod.sh`), hence the 3-day
+  TTLs in `clickhouse-lowmem.xml` and `make analytics-check` (see below).
 - `tb deploy` prints `Deployment failed` / `[Error] …` but may still exit 0,
   and exits non-zero for the harmless "No changes to be deployed" — the
   entrypoint decides on the text, not the exit code.
@@ -89,6 +98,7 @@ analytics* is on (it is by default).
 ## Day-2 operations
 
 ```bash
+make analytics-check   # ClickHouse memory budget / parts / error counters + api_kpis queried like Ghost does
 docker compose logs -f traffic-analytics tinybird-local        # ingestion / Tinybird logs
 docker compose run --rm tinybird-deploy tb --local sql "select count() from analytics_events"
 docker compose run --rm tinybird-deploy tb --local endpoint ls  # pipes Ghost queries
@@ -112,6 +122,40 @@ tests its datafiles against exactly that pair; the CLI is pinned because
 (or `"workspace admin token"`), then `./scripts/analytics-init.sh`.
 
 **Reset everything** (loses all analytics history): `docker compose rm -sf tinybird-local tinybird-deploy && sudo rm -rf data/tinybird && docker compose up -d && ./scripts/analytics-init.sh`.
+
+## Troubleshooting: Ghost Admin shows 0 visitors
+
+Run `make analytics-check` first. Reading its output:
+
+| symptom | meaning | fix |
+|---|---|---|
+| `OVER BUDGET` / `system.parts aggregation FAILED … MEMORY_LIMIT_EXCEEDED` | ClickHouse is wedged (see the gotcha above). Ghost's log shows `Error in Tinybird API request … Response code 429`, the response body says `Memory limit (total) exceeded`. | on the server: `cd ~/lfi && git pull && bash scripts/analytics-recover-prod.sh` |
+| probe `-> HTTP 403` | JWT rejected: `TINYBIRD_WORKSPACE_ID`/`TINYBIRD_ADMIN_TOKEN` in `.env` don't match the workspace | `./scripts/analytics-init.sh` |
+| probe `-> HTTP 404` | pipe not deployed | `docker compose up -d tinybird-deploy && docker compose logs tinybird-deploy` |
+| `no ghost-stats tracker tag` | Ghost doesn't emit the tracker: tokens missing on the ghost container or Settings → Analytics → Web analytics off | `./scripts/analytics-init.sh`, check Ghost settings |
+| probe 200 with rows but Admin still at 0 | Ghost caches pipe results a few minutes; Admin's own browser requests go through the same Caddy route | wait / hard-reload, check the browser console |
+
+Page hits never depend on ClickHouse being queryable: `traffic-analytics` logs
+`POST /api/v1/page_hit` + `response received`, Tinybird's nginx log inside the
+container (`/var/log/nginx/access.log`, `POST /v0/events`) answers 202 and the
+HFI buffers the insert — so the data is usually all there once ClickHouse can
+merge and answer again.
+
+### Incident 2026-10-29 — MEMORY_LIMIT_EXCEEDED, 0 visitors for ~10 days
+
+After 4 weeks of uptime ClickHouse's RSS had grown to 3.1 GB against the
+1.5 GiB budget of the time: `system.query_views_log` held 17k part directories /
+1.3 GB on disk, `query_log` 6.4k, `part_log` 4k, Tinybird's own spans table 1.6k (16.8k active +
+12k outdated parts in total). Every merge and every pipe query died with
+`MEMORY_LIMIT_EXCEEDED` (35 M errors, 166 k `TOO_MANY_PARTS`, ClickHouse at
+245 % CPU retrying merges and writing 330 MB/h of error log), so Tinybird
+answered 429 to Ghost, Ghost Admin showed 0 visitors — sporadically since
+2026-10-19, permanently from 2026-10-28. Ingestion kept working (202s). Fix:
+`scripts/analytics-recover-prod.sh` (hot-raise the limit, drop the system log
+tables, restart with the new config) + this repo's 2 GiB budget and 3-day log
+TTLs. Lesson: Tinybird Local's healthcheck (`/v0/health`) and Ghost (which just
+logs the 429 and renders zeros) don't surface this — run `make analytics-check`
+when the numbers look wrong.
 
 ## Security notes
 
